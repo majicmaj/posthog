@@ -75,6 +75,7 @@ import type {
     UserGitHubLinkStartRequestApi,
     UserGitHubLinkStartResponseApi,
     UserGitHubPrepareCallbackRequestApi,
+    UserGithubLoginApi,
     UserPushTokenItemApi,
     UserPushTokenRegisterRequestApi,
     UserPushTokenUnregisterRequestApi,
@@ -2421,8 +2422,8 @@ export const getUsersGithubLoginRetrieveUrl = (uuid: string) => {
     return `/api/users/${uuid}/github_login/`
 }
 
-export const usersGithubLoginRetrieve = async (uuid: string, options?: RequestInit): Promise<void> => {
-    return apiMutator<void>(getUsersGithubLoginRetrieveUrl(uuid), {
+export const usersGithubLoginRetrieve = async (uuid: string, options?: RequestInit): Promise<UserGithubLoginApi> => {
+    return apiMutator<UserGithubLoginApi>(getUsersGithubLoginRetrieveUrl(uuid), {
         ...options,
         method: 'GET',
     })
