@@ -76982,7 +76982,8 @@ export namespace Schemas {
        * * `medium` - medium
        * * `high` - high
        * * `xhigh` - xhigh
-       * * `max` - max */
+       * * `max` - max
+       * * `ultracode` - ultracode */
       reasoning_effort?: ReasoningEffortEnum | null;
     }
 

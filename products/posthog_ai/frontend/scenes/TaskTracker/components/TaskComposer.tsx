@@ -12,7 +12,8 @@ import {
     Welcome,
 } from 'products/posthog_ai/frontend/api/primitives'
 import { modelCatalogueLogic } from 'products/posthog_ai/frontend/logics/modelCatalogueLogic'
-import { getRuntimeAdapterForModel, resolveEffortForModel } from 'products/posthog_ai/frontend/utils/composerModels'
+import { getRuntimeAdapterForModel, DEFAULT_COMPOSER_EFFORT, DEFAULT_COMPOSER_MODEL, resolveEffortForModel,
+} from 'products/posthog_ai/frontend/utils/composerModels'
 import {
     cycleMode,
     getModesForRuntimeAdapter,
@@ -24,6 +25,7 @@ import { ComposerModelEffortPickers } from '../../../components/composer/Compose
 import { ComposerModePicker } from '../../../components/composer/ComposerModePicker'
 import { ComposerModeShortcut } from '../../../components/composer/ComposerModeShortcut'
 import { useDebouncedDraft } from '../../../components/composer/useDebouncedDraft'
+import { taskRunDefaultsLogic } from '../../../logics/taskRunDefaultsLogic'
 import { taskTrackerSceneLogic } from '../taskTrackerSceneLogic'
 import { RepositorySelector } from './RepositorySelector'
 
@@ -33,8 +35,19 @@ export function TaskComposer(): JSX.Element {
     const { newTaskData, isSubmittingTask, activeSuggestionGroup, displayHeadline, consentBlocked } =
         useValues(taskTrackerSceneLogic)
     const { catalogue } = useValues(modelCatalogueLogic)
-    // Permission modes belong to the harness, so they follow the picked model.
-    const composerAdapter = getRuntimeAdapterForModel(catalogue, newTaskData.model)
+    const { claudeDefaultModel, claudeDefaultEffort } = useValues(taskRunDefaultsLogic)
+
+    // What the pickers display when nothing is explicitly picked for this run: the server-resolved
+    // default (user preference over project default), else the built-in composer defaults.
+    const displayModel = newTaskData.model ?? claudeDefaultModel ?? DEFAULT_COMPOSER_MODEL
+    const displayEffort = resolveEffortForModel(
+        catalogue,
+        newTaskData.reasoningEffort ?? claudeDefaultEffort ?? DEFAULT_COMPOSER_EFFORT,
+        displayModel
+    )
+    // Permission modes belong to the harness, so they follow the model actually shown — which with no
+    // explicit pick is the resolved default, not the empty selection.
+    const composerAdapter = getRuntimeAdapterForModel(catalogue, displayModel)
 
     // Buffer the description locally and debounce the write to kea so each keystroke is a cheap, isolated
     // re-render instead of a store dispatch. `Composer.Root` already blocks send on an empty `draft.value`
@@ -97,8 +110,9 @@ export function TaskComposer(): JSX.Element {
                                     />
                                     <ComposerModelEffortPickers
                                         models={catalogue}
-                                        selectedModel={newTaskData.model}
-                                        selectedEffort={newTaskData.reasoningEffort}
+                                        selectedModel={displayModel}
+                                        selectedEffort={displayEffort}
+                                        isDefaultSelection={newTaskData.model === null}
                                         onModelChange={(model) =>
                                             setNewTaskData({
                                                 model,
