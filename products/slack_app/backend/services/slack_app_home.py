@@ -149,7 +149,6 @@ MODAL_BLOCK_RUNTIME_ADAPTER = "block_runtime_adapter"
 MODAL_BLOCK_MODEL = "block_model"
 MODAL_BLOCK_REASONING_EFFORT = "block_reasoning_effort"
 
-
 @dataclass(frozen=True)
 class PickerEffort:
     value: str
@@ -781,7 +780,7 @@ def _personal_section_blocks(user_row: SlackSettings | None) -> list[dict]:
     """Personal AI override sub-card. Always editable by the user themselves."""
 
     has_override = bool(user_row and user_row.runtime_adapter and user_row.model)
-    summary = _row_summary(user_row) if has_override else "_No personal override — using PostHog's default._"
+    summary = _row_summary(user_row) if has_override else "_No personal override — inheriting the project default._"
 
     actions: list[dict] = [
         {
