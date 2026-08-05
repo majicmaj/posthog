@@ -320,11 +320,11 @@ export interface experimentReplayTabLogicActions {
     reportTabViewed: () => {
         value: true
     }
-    selectWatchCard: (card: ExperimentWatchCardApi | null) => {
-        card: ExperimentWatchCardApi | null
-    }
     scannerCrossSellClicked: () => {
         value: true
+    }
+    selectWatchCard: (card: ExperimentWatchCardApi | null) => {
+        card: ExperimentWatchCardApi | null
     }
     setMetricFilterMode: (mode: ExperimentReplayMetricFilterMode) => {
         mode: ExperimentReplayMetricFilterMode
