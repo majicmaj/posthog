@@ -130,6 +130,7 @@ For an **existing scout**, tune with `posthog:scout-config-update` (find the `id
   The channel also requires `emit`: a dry-run scout has nowhere to record to, so `scout-record-output` fails closed for it.
   Reach for this when the scout's job is a recurring **measurement** (judge each sampled report good/bad/unsure with a reason, score accounts, classify sessions) rather than surfacing anomalies; keep enums small and add a free-text reason field so the series is breakdown-friendly _and_ auditable.
   The skill body should say what to sample, how to judge, and what `subject` to stamp on each record; the schema owns the record shape.
+  The full design treatment — rubric writing, rates-over-scores record shape, rubric versioning, sampling discipline, the seam with reports — is the **recurring measurement / LLM-judge** pattern in [`references/scout-patterns.md`](references/scout-patterns.md).
 
 ## Steering with notes (no authoring needed)
 
