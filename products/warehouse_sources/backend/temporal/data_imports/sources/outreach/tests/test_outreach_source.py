@@ -188,10 +188,8 @@ class TestOutreachSource:
 
     def test_a_401_on_the_api_host_is_not_treated_as_permanent(self) -> None:
         # Mid-sync 401s on the API host (not the token endpoint) are handled by token re-mint.
-        # The keys are substring patterns, matched against the raised message by the runtime
-        # (see `error_message_matches`), so match the message against them rather than looking
-        # the message up as a dict key - a key lookup would pass for any prefix pattern too.
-        error_msg = "401 Client Error: Unauthorized for url: https://api.outreach.io/api/v2/prospects"
         errors = self.source.get_non_retryable_errors()
 
-        assert not any(pattern in error_msg for pattern in errors)
+        assert not any(
+            key in "401 Client Error: Unauthorized for url: https://api.outreach.io/api/v2/prospects" for key in errors
+        )
