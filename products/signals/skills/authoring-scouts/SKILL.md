@@ -2,23 +2,18 @@
 name: authoring-scouts
 description: >
   How to author, edit, and adapt PostHog Signals scouts — the scheduled agents that
-  scan a project and write reports into the Signals inbox. Use when a user wants to
-  customize a canonical scout for their own setup (narrow its scope, retune its
-  thresholds, add disqualifiers), tweak a scout's schedule or dry-run posture, or
-  write a brand-new scout from scratch for a specific use case (a custom event, a
-  product surface no canonical scout covers), build a measurement scout that records
-  structured output (an LLM-judge scoring or classifying a sample on a schedule — a
-  custom metric no deterministic query can compute), or steer a scout without editing it at all
-  by leaving it a note. Covers the scout SKILL.md anatomy, the
-  report contract, the structured-output channel, the dedupe + scratchpad-memory
-  conventions, the scout-notes steering
-  channel, the per-team skills-store
-  path vs the canonical in-repo path, and the write-and-inspect test loop (with dry-run as an
-  optional safety net). Trigger on
+  scan a project and write reports into the Signals inbox. Use to customize a
+  canonical scout (narrow its scope, retune thresholds, add disqualifiers), tweak a
+  scout's schedule or dry-run posture, write a new scout for a surface the fleet
+  doesn't cover, build a measurement scout that records structured output (an
+  LLM-judge scoring a sample on a schedule — a custom metric no query can compute),
+  or steer a scout without editing it by leaving it a note. Covers the scout SKILL.md
+  anatomy, the report contract, the structured-output channel, the dedupe +
+  scratchpad-memory conventions, scout notes, the per-team skills-store path vs the
+  canonical in-repo path, and the write-and-inspect test loop. Trigger on
   "write/edit/customize a signals scout", "new scout for X", "tune my scout schedule",
   "make a scout that watches <event>", "score/judge/measure X with a scout",
-  "structured output from a scout", "leave a note for / give feedback to a scout",
-  "tell the scouts about X".
+  "structured output from a scout", "leave a note for / give feedback to a scout".
 metadata:
   owner_team: signals
 ---

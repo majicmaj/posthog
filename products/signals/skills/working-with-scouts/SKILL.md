@@ -4,13 +4,12 @@ description: >
   How to get real jobs done with PostHog Signals scouts — the scheduled agents that watch a
   project and write reports into the Signals inbox — and how to steer and customize the fleet
   over time. Use when a user wants to delegate a watching job ("have a scout keep an eye on X",
-  "tell me if Y spikes", "watch this for a week"), wants a recurring judged metric from a scout
-  ("score X on a schedule", "measure quality of Y"), wants to know which scout covers a surface,
-  asks how to act on what scouts report, complains the fleet is noisy or quiet ("my scouts
-  aren't useful", "too many reports"), or wants the fleet to get smarter over time (feedback
-  loops, periodic calibration, promoting one-off steers into permanent policy). The operating
-  manual for the human–scout working relationship; routes to `authoring-scouts` for write
-  mechanics, `exploring-scouts` for run observability, and `inbox-exploration` for report
+  "tell me if Y spikes"), wants a recurring judged metric from a scout ("score X on a
+  schedule", "measure quality of Y"), wants to know which scout covers a surface, asks how to
+  act on what scouts report, complains the fleet is noisy or quiet, or wants the fleet to get
+  smarter over time (feedback loops, calibration, promoting one-off steers into policy). The
+  operating manual for the human–scout working relationship; routes to `authoring-scouts` for
+  write mechanics, `exploring-scouts` for run observability, and `inbox-exploration` for report
   triage. Trigger on "work with my scouts", "get more out of scouts", "have a scout watch X",
   "what do I do with this scout report", "calibrate/review my scout fleet".
 metadata:
