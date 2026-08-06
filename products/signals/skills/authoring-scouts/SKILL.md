@@ -10,7 +10,7 @@ description: >
   or steer a scout without editing it by leaving it a note. Covers the scout SKILL.md
   anatomy, the report contract, the structured-output channel, the dedupe +
   scratchpad-memory conventions, scout notes, the per-team skills-store path vs the
-  canonical in-repo path, and the write-and-inspect test loop. Trigger on
+  canonical in-repo path, and the test loop. Trigger on
   "write/edit/customize a signals scout", "new scout for X", "tune my scout schedule",
   "make a scout that watches <event>", "score/judge/measure X with a scout",
   "structured output from a scout", "leave a note for / give feedback to a scout".
