@@ -249,6 +249,17 @@ class TestGetRows:
         assert mock_session.return_value.get.call_count == 0
 
     @mock.patch(f"{_MODULE}.make_tracked_session")
+    def test_plaintext_downgrade_of_the_api_host_is_refused(self, mock_session: mock.MagicMock) -> None:
+        # Same host, but http:// would put the bearer token on the wire in the clear.
+        mock_session.return_value.post.return_value = _token_response()
+        mock_session.return_value.get.return_value = _json_response(
+            {"data": [], "links": {"next": "http://api.outreach.io/api/v2/prospects?page[after]=abc"}}
+        )
+
+        with pytest.raises(ValueError, match="off-origin"):
+            list(get_rows("cid", "sec", "rt", "prospects", mock.MagicMock(), FakeResumeManager()))
+
+    @mock.patch(f"{_MODULE}.make_tracked_session")
     def test_incremental_request_carries_the_updated_at_filter(self, mock_session: mock.MagicMock) -> None:
         mock_session.return_value.post.return_value = _token_response()
         mock_session.return_value.get.return_value = _json_response({"data": [], "links": {}})
