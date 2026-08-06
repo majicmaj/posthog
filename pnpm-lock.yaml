@@ -2503,6 +2503,8 @@ importers:
 
   products/batch_exports: {}
 
+  products/billing: {}
+
   products/business_knowledge:
     dependencies:
       '@posthog/icons':
