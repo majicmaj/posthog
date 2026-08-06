@@ -295,6 +295,21 @@ class TestGetRows:
         assert mock_session.return_value.get.call_count == 5  # MAX_RETRY_ATTEMPTS
 
     @mock.patch(f"{_MODULE}.make_tracked_session")
+    def test_non_retryable_status_raises_immediately_and_is_logged(self, mock_session: mock.MagicMock) -> None:
+        forbidden = _json_response({"errors": ["forbidden"]}, status_code=403)
+        forbidden.raise_for_status.side_effect = requests.HTTPError("403 Client Error: Forbidden for url")
+        mock_session.return_value.post.return_value = _token_response()
+        mock_session.return_value.get.return_value = forbidden
+        logger = mock.MagicMock()
+
+        with pytest.raises(requests.HTTPError):
+            list(get_rows("cid", "sec", "rt", "prospects", logger, FakeResumeManager()))
+
+        # A 403 is a permission problem, not a transient one - no retries.
+        assert mock_session.return_value.get.call_count == 1
+        assert logger.error.call_count == 1
+
+    @mock.patch(f"{_MODULE}.make_tracked_session")
     def test_no_items_yields_nothing(self, mock_session: mock.MagicMock) -> None:
         mock_session.return_value.post.return_value = _token_response()
         mock_session.return_value.get.return_value = _json_response({"data": [], "links": {}})
