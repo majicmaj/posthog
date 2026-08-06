@@ -1,6 +1,7 @@
 import dataclasses
 from collections.abc import Iterator
 from typing import Any, Optional, cast
+from urllib.parse import urlparse
 
 import requests
 from structlog.types import FilteringBoundLogger
@@ -14,8 +15,9 @@ from products.warehouse_sources.backend.temporal.data_imports.sources.common.res
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.typings import SourceResponse
 from products.warehouse_sources.backend.temporal.data_imports.sources.outreach.settings import OUTREACH_ENDPOINTS
 
-OUTREACH_BASE_URL = "https://api.outreach.io/api/v2"
-OUTREACH_TOKEN_URL = "https://api.outreach.io/oauth/token"
+OUTREACH_API_ORIGIN = "https://api.outreach.io"
+OUTREACH_BASE_URL = f"{OUTREACH_API_ORIGIN}/api/v2"
+OUTREACH_TOKEN_URL = f"{OUTREACH_API_ORIGIN}/oauth/token"
 # Outreach's max page[size]/page[limit] across both its cursor and (deprecated) offset pagination
 # modes is 1000; 500 keeps individual response bodies modest.
 PAGE_SIZE = 500
@@ -27,6 +29,21 @@ JSON_API_HEADERS = {"Content-Type": "application/vnd.api+json", "Accept": "appli
 
 class OutreachRetryableError(Exception):
     pass
+
+
+def _assert_same_origin(url: str) -> str:
+    """Reject pagination URLs that point anywhere but the Outreach API host.
+
+    Every request carries the OAuth access token in an `Authorization` header. `links.next` comes
+    off the response body, and the resumed URL is whatever we persisted from a previous run, so a
+    poisoned value pointing at an attacker-controlled host would hand them the token. Pin both to
+    the exact `https://api.outreach.io` origin before following or storing them.
+    """
+    parsed = urlparse(url)
+    if f"{parsed.scheme.lower()}://{parsed.netloc.lower()}" != OUTREACH_API_ORIGIN:
+        raise ValueError(f"Refusing to follow off-origin Outreach pagination URL: {url}")
+
+    return url
 
 
 @dataclasses.dataclass
@@ -144,7 +161,7 @@ def get_rows(
     resume = resumable_source_manager.load_state() if resumable_source_manager.can_resume() else None
 
     if resume is not None and resume.next_url:
-        url = resume.next_url
+        url = _assert_same_origin(resume.next_url)
         params: Optional[dict[str, Any]] = None
         logger.debug(f"Outreach: resuming {endpoint} from {url}")
     else:
@@ -170,6 +187,7 @@ def get_rows(
         if not next_url:
             break
 
+        next_url = _assert_same_origin(next_url)
         # Save after yielding, not before, so a crash re-yields (and merge-dedupes) the last
         # page instead of skipping it.
         resumable_source_manager.save_state(OutreachResumeConfig(next_url=next_url))
