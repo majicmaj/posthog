@@ -1,5 +1,5 @@
 import { BindLogic, useActions, useValues } from 'kea'
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 
 import { IconLogomark } from '@posthog/icons'
 import { LemonCard } from '@posthog/lemon-ui'
@@ -38,22 +38,15 @@ export function ExceptionCard({
     loading,
     ...contentProps
 }: ExceptionCardProps): JSX.Element {
-    const cardLogicProps = useMemo(() => ({ issueId }), [issueId])
-    const { setLoading } = useActions(exceptionCardLogic(cardLogicProps))
+    const cardLogicProps = useMemo(() => ({ issueId, loading }), [issueId, loading])
 
-    useEffect(() => {
-        setLoading(loading)
-    }, [setLoading, loading])
-
-    const eventProps = useMemo(
-        () =>
-            ({
-                properties: event?.properties,
-                id: event?.uuid ?? issueId ?? 'error',
-                timestamp: event?.timestamp,
-            }) as ErrorPropertiesLogicProps,
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        [event?.uuid ?? issueId]
+    const eventProps = useMemo<ErrorPropertiesLogicProps>(
+        () => ({
+            properties: event?.properties,
+            id: event?.uuid ?? issueId,
+            timestamp: event?.timestamp,
+        }),
+        [event?.properties, event?.timestamp, event?.uuid, issueId]
     )
 
     return (
@@ -78,7 +71,15 @@ function ExceptionCardContent({
 
     return (
         <LemonCard hoverEffect={false} className="p-0 relative w-full h-full border-0 rounded-none flex flex-col">
-            <TabsPrimitive value={currentTab} onValueChange={setCurrentTab} className="flex flex-col flex-1 min-h-0">
+            <TabsPrimitive
+                value={currentTab}
+                onValueChange={(tab) => {
+                    if (tab === 'stack_trace' || tab === 'properties' || tab === 'session') {
+                        setCurrentTab(tab)
+                    }
+                }}
+                className="flex flex-col flex-1 min-h-0"
+            >
                 <div className="flex justify-between h-[2rem] items-center w-full px-2 border-b shrink-0">
                     <TabsPrimitiveList className="flex justify-between w-full h-full items-center">
                         <div className="w-full h-full">

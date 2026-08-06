@@ -57,8 +57,12 @@ export function SessionTab({ timestamp, className, ...props }: SessionTabProps):
                     <BindLogic logic={sessionTabLogic} props={{ timestamp, sessionId }}>
                         <TabsPrimitive
                             value={currentSessionTab}
-                            onValueChange={setCurrentSessionTab}
-                            className="flex flex-col flex-1 min-h-0"
+                            onValueChange={(tab) => {
+                                if (tab === 'timeline' || tab === 'recording') {
+                                    setCurrentSessionTab(tab)
+                                }
+                            }}
+                            className="flex min-h-0 min-w-0 flex-1 flex-col"
                         >
                             <SubHeader className="p-0 shrink-0">
                                 <TabsPrimitiveList className="flex justify-start gap-2 w-full h-full items-center">
@@ -78,7 +82,7 @@ export function SessionTab({ timestamp, className, ...props }: SessionTabProps):
                                     </div>
                                 </TabsPrimitiveList>
                             </SubHeader>
-                            <SessionTimelineTab />
+                            <SessionTimelineTab timestamp={timestamp} />
                             <SessionRecordingTab />
                         </TabsPrimitive>
                     </BindLogic>
@@ -88,11 +92,11 @@ export function SessionTab({ timestamp, className, ...props }: SessionTabProps):
     )
 }
 
-export function SessionTimelineTab(): JSX.Element {
+export function SessionTimelineTab({ timestamp }: { timestamp?: string }): JSX.Element {
     const { properties, uuid } = useValues(errorPropertiesLogic)
     const sessionTimelineRef = useRef<SessionTimelineHandle>(null)
     const { currentSessionTab } = useValues(exceptionCardLogic)
-    const { sessionId, timestamp } = useValues(sessionTabLogic)
+    const { sessionId } = useValues(sessionTabLogic)
     const { setRecordingTimestamp } = useActions(sessionTabLogic)
     const { setCurrentSessionTab } = useActions(exceptionCardLogic)
 

@@ -1,5 +1,4 @@
-import { useActions, useValues } from 'kea'
-import { useEffect } from 'react'
+import { useValues } from 'kea'
 import { match } from 'ts-pattern'
 
 import { LemonBanner, Spinner } from '@posthog/lemon-ui'
@@ -32,24 +31,7 @@ export function SessionRecordingLoading(): JSX.Element {
 }
 
 export function SessionRecordingContent(): JSX.Element {
-    const {
-        recordingProps,
-        recordingTimestamp,
-        isNotFound,
-        sessionPlayerMetaDataLoading,
-        isTimestampOutsideRecording,
-    } = useValues(sessionTabLogic)
-    const { seekToTimestamp, setPlay } = useActions(sessionTabLogic)
-
-    useEffect(() => {
-        if (sessionPlayerMetaDataLoading || isNotFound) {
-            return
-        }
-        if (recordingTimestamp) {
-            seekToTimestamp(recordingTimestamp)
-        }
-        setPlay()
-    }, [seekToTimestamp, recordingTimestamp, setPlay, isNotFound, sessionPlayerMetaDataLoading])
+    const { recordingProps, isTimestampOutsideRecording } = useValues(sessionTabLogic)
 
     return (
         <div className="h-full flex flex-col">
