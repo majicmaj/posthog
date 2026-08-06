@@ -53,17 +53,46 @@ fi
 # the physical path Seatbelt enforces against (/var/folders -> /private/var/...).
 tmpdir="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P || echo "${TMPDIR:-/tmp}")"
 
-# The base profile allows the git config files by literal path, but Seatbelt
-# matches physical paths — when one is a symlink (dotfile managers), the read of
-# its target is still denied and cargo/libgit2 fails hard ("failed to stat
-# ~/.gitconfig"). Resolve symlinked configs here and allow (read) + deny (write,
-# hooksPath/credential-helper escape) their targets in the rendered profile.
+# The base profile allows three git config files by literal path, but git reads
+# whatever an [include]/[includeIf] chain points at, and Seatbelt matches physical
+# paths so a symlinked config's target is denied too (dotfile managers). Either gap
+# makes libgit2 fail hard ("could not stat ..."), which takes down every cargo build
+# with a git dependency — cyclotron, and with it the whole node stack.
+#
+# So ask git which files it actually reads instead of guessing names, and allow
+# (read) + deny (write, hooksPath/credential-helper escape) each one plus any
+# symlink target. Paths outside $HOME are readable already, so only $HOME ones
+# matter here. Falls back to the three well-known names when git is unavailable.
+# A config path containing a tab or newline is skipped: the render below rejects
+# quotes and backslashes for the same reason, and neither survives an SBPL literal.
 gitcfg_targets=()
-for _cfg in "$HOME/.gitconfig" "$HOME/.gitconfig.local" "$HOME/.config/git/config"; do
-    [[ -L "$_cfg" ]] || continue
-    _resolved="$(/usr/bin/readlink -f "$_cfg" 2>/dev/null || true)"
-    [[ -n "$_resolved" && "$_resolved" != "$_cfg" ]] && gitcfg_targets+=("$_resolved")
-done
+_add_gitcfg() {
+    local _p="$1" _resolved
+    [[ -n "$_p" && "$_p" == "$HOME"/* ]] || return 0
+    [[ "$_p" == *$'\t'* || "$_p" == *$'\n'* ]] && return 0
+    # Repo-local configs are already covered by the PROJECT/MAINREPO subpath allow,
+    # and git writes to them (cargo updating a git dependency does). Listing one here
+    # would add a deny-write that breaks those writes.
+    case "$_p" in "$project"/* | "$mainrepo"/*) return 0 ;; esac
+    gitcfg_targets+=("$_p")
+    if [[ -L "$_p" ]]; then
+        _resolved="$(/usr/bin/readlink -f "$_p" 2>/dev/null || true)"
+        [[ -n "$_resolved" && "$_resolved" != "$_p" ]] && gitcfg_targets+=("$_resolved")
+    fi
+}
+_gitcfg_listed=0
+if command -v git >/dev/null 2>&1; then
+    while IFS= read -r _cfg; do
+        _gitcfg_listed=1
+        _add_gitcfg "$_cfg"
+    done < <(git config --list --show-origin --name-only 2>/dev/null |
+        awk -F'\t' '/^file:/ { sub(/^file:/, "", $1); print $1 }' | sort -u)
+fi
+if [[ "$_gitcfg_listed" -eq 0 ]]; then
+    for _cfg in "$HOME/.gitconfig" "$HOME/.gitconfig.local" "$HOME/.config/git/config"; do
+        _add_gitcfg "$_cfg"
+    done
+fi
 
 cache_key="$(printf '%s\0' "$project" "$mainrepo" "$HOME" "${SSH_AUTH_SOCK:-}" ${gitcfg_targets[@]+"${gitcfg_targets[@]}"} | /usr/bin/shasum -a256 | cut -c1-16)"
 rendered="$tmpdir/posthog-dev-sandbox-$cache_key.sb"
@@ -102,8 +131,9 @@ render_profile() {
         printf '(allow file-read*'
         printf ' (literal "%s")' "${ancestors[@]}"
         printf ')\n'
-        # Physical targets of symlinked git configs (resolved above): readable like
-        # the configs themselves, write-denied for the same hooksPath escape reason.
+        # Every git config file under $HOME that git actually reads, plus the physical
+        # target of each symlinked one (collected above): readable like the three the
+        # base profile lists, write-denied for the same hooksPath escape reason.
         if [[ ${#gitcfg_targets[@]} -gt 0 ]]; then
             printf '(allow file-read*'
             printf ' (literal "%s")' "${gitcfg_targets[@]}"
