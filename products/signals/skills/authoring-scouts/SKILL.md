@@ -6,14 +6,18 @@ description: >
   customize a canonical scout for their own setup (narrow its scope, retune its
   thresholds, add disqualifiers), tweak a scout's schedule or dry-run posture, or
   write a brand-new scout from scratch for a specific use case (a custom event, a
-  product surface no canonical scout covers), or steer a scout without editing it at all
+  product surface no canonical scout covers), build a measurement scout that records
+  structured output (an LLM-judge scoring or classifying a sample on a schedule — a
+  custom metric no deterministic query can compute), or steer a scout without editing it at all
   by leaving it a note. Covers the scout SKILL.md anatomy, the
-  report contract, the dedupe + scratchpad-memory conventions, the scout-notes steering
+  report contract, the structured-output channel, the dedupe + scratchpad-memory
+  conventions, the scout-notes steering
   channel, the per-team skills-store
   path vs the canonical in-repo path, and the write-and-inspect test loop (with dry-run as an
   optional safety net). Trigger on
   "write/edit/customize a signals scout", "new scout for X", "tune my scout schedule",
-  "make a scout that watches <event>", "leave a note for / give feedback to a scout",
+  "make a scout that watches <event>", "score/judge/measure X with a scout",
+  "structured output from a scout", "leave a note for / give feedback to a scout",
   "tell the scouts about X".
 metadata:
   owner_team: signals
@@ -94,6 +98,7 @@ The single most important design decision in any scout is its **signal-vs-noise 
 For error tracking it's the `count` vs `distinct_users` ratio; for CSP it's reach over raw count.
 Your new scout needs its own.
 Name it explicitly near the top of the body so every run anchors on it.
+(The one exception: a **measurement scout** on the structured-output channel holds no bar — it applies a **rubric** to every sampled item, and the rubric takes the discriminator's slot as the design surface to name, dogfood, and calibrate. See the recurring measurement / LLM-judge pattern in `scout-patterns.md`.)
 
 ## Run posture (config)
 
@@ -207,7 +212,7 @@ Keep the two in sync when the scout config / run / scratchpad surfaces change.
 
 ## Quality bar for a v1 scout
 
-- A named, cheap **signal-vs-noise discriminator** anchored near the top.
+- A named, cheap **signal-vs-noise discriminator** anchored near the top (on a measurement scout, the rubric and sampling recipe take this slot).
 - A **quick close-out** so a quiet run is cheap (don't pay for deep exploration when the watched surface is at baseline or absent).
 - 2–4 concrete **explore patterns** with the actual queries/tools to run — starting points, not a rigid checklist.
 - **Disqualifiers** listing this project's known noise (single-user quirks, dev-env bursts, allowlisted entities).

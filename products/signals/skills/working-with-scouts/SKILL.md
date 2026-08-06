@@ -4,7 +4,8 @@ description: >
   How to get real jobs done with PostHog Signals scouts — the scheduled agents that watch a
   project and write reports into the Signals inbox — and how to steer and customize the fleet
   over time. Use when a user wants to delegate a watching job ("have a scout keep an eye on X",
-  "tell me if Y spikes", "watch this for a week"), wants to know which scout covers a surface,
+  "tell me if Y spikes", "watch this for a week"), wants a recurring judged metric from a scout
+  ("score X on a schedule", "measure quality of Y"), wants to know which scout covers a surface,
   asks how to act on what scouts report, complains the fleet is noisy or quiet ("my scouts
   aren't useful", "too many reports"), or wants the fleet to get smarter over time (feedback
   loops, periodic calibration, promoting one-off steers into permanent policy). The operating
