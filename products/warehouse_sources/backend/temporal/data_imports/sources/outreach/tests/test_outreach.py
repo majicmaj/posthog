@@ -222,6 +222,33 @@ class TestGetRows:
         assert first_call.kwargs["params"] is None
 
     @mock.patch(f"{_MODULE}.make_tracked_session")
+    def test_off_origin_links_next_is_refused_and_not_saved(self, mock_session: mock.MagicMock) -> None:
+        # Following it would send the Authorization header to a host that isn't Outreach.
+        mock_session.return_value.post.return_value = _token_response()
+        mock_session.return_value.get.return_value = _json_response(
+            {"data": [{"id": 1, "attributes": {}}], "links": {"next": "https://evil.example.com/api/v2/prospects"}}
+        )
+        manager = FakeResumeManager()
+
+        with pytest.raises(ValueError, match="off-origin"):
+            list(get_rows("cid", "sec", "rt", "prospects", mock.MagicMock(), manager))
+
+        assert manager.saved == []
+        assert mock_session.return_value.get.call_count == 1
+
+    @mock.patch(f"{_MODULE}.make_tracked_session")
+    def test_off_origin_resume_url_is_refused_before_any_request(self, mock_session: mock.MagicMock) -> None:
+        mock_session.return_value.post.return_value = _token_response()
+        manager = FakeResumeManager(
+            state=OutreachResumeConfig(next_url="https://api.outreach.io@evil.example.com/api/v2/prospects")
+        )
+
+        with pytest.raises(ValueError, match="off-origin"):
+            list(get_rows("cid", "sec", "rt", "prospects", mock.MagicMock(), manager))
+
+        assert mock_session.return_value.get.call_count == 0
+
+    @mock.patch(f"{_MODULE}.make_tracked_session")
     def test_incremental_request_carries_the_updated_at_filter(self, mock_session: mock.MagicMock) -> None:
         mock_session.return_value.post.return_value = _token_response()
         mock_session.return_value.get.return_value = _json_response({"data": [], "links": {}})
@@ -293,6 +320,19 @@ class TestGetRows:
                 list(get_rows("cid", "sec", "rt", "prospects", mock.MagicMock(), FakeResumeManager()))
 
         assert mock_session.return_value.get.call_count == 5  # MAX_RETRY_ATTEMPTS
+
+    @mock.patch(f"{_MODULE}.make_tracked_session")
+    def test_non_retryable_status_raises_immediately(self, mock_session: mock.MagicMock) -> None:
+        forbidden = _json_response({}, status_code=403)
+        forbidden.raise_for_status.side_effect = requests.HTTPError("403 Client Error", response=mock.MagicMock())
+        mock_session.return_value.post.return_value = _token_response()
+        mock_session.return_value.get.return_value = forbidden
+
+        with pytest.raises(requests.HTTPError):
+            list(get_rows("cid", "sec", "rt", "prospects", mock.MagicMock(), FakeResumeManager()))
+
+        # A 403 is a permission problem, not a transient one, so it isn't retried.
+        assert mock_session.return_value.get.call_count == 1
 
     @mock.patch(f"{_MODULE}.make_tracked_session")
     def test_no_items_yields_nothing(self, mock_session: mock.MagicMock) -> None:
