@@ -38,6 +38,9 @@ interface EvaluationRunRowOverrides {
     sentimentScore?: EvaluationRunRow[12]
     sessionId?: EvaluationRunRow[13]
     skipped?: EvaluationRunRow[14]
+    targetSpanId?: EvaluationRunRow[15]
+    evaluationRunId?: EvaluationRunRow[16]
+    evaluationSource?: EvaluationRunRow[17]
 }
 
 function makeEvaluationRunRow({
@@ -49,6 +52,9 @@ function makeEvaluationRunRow({
     sentimentScore = null,
     sessionId = null,
     skipped = null,
+    targetSpanId = '',
+    evaluationRunId = '',
+    evaluationSource = 'online',
 }: EvaluationRunRowOverrides = {}): EvaluationRunRow {
     return [
         'run-1',
@@ -66,6 +72,9 @@ function makeEvaluationRunRow({
         sentimentScore,
         sessionId,
         skipped,
+        targetSpanId,
+        evaluationRunId,
+        evaluationSource,
     ]
 }
 
@@ -132,6 +141,26 @@ describe('mapEvaluationRunRow', () => {
         const run = mapEvaluationRunRow(makeEvaluationRunRow({ result: '0.9', resultType: 'number' }))
 
         expect(run.result).toBe(0.9)
+    })
+
+    it('maps imported evaluator and run identities separately', () => {
+        const run = mapEvaluationRunRow(
+            makeEvaluationRunRow({
+                evaluationType: 'otel',
+                evaluationSource: 'imported',
+                evaluationRunId: 'run-id',
+                targetSpanId: 'span-id',
+            })
+        )
+
+        expect(run).toMatchObject({
+            evaluation_id: 'eval-1',
+            evaluation_run_id: 'run-id',
+            evaluation_type: 'otel',
+            evaluation_source: 'imported',
+            target_span_id: 'span-id',
+        })
+        expect(run.evaluation_id).not.toBe(run.evaluation_run_id)
     })
 
     it.each([true, 'true', 'True', '1'])('maps explicit pass result %p', (result) => {
