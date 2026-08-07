@@ -13,6 +13,7 @@ from products.warehouse_sources.backend.temporal.data_imports.sources.outreach.o
     OutreachRetryableError,
     _flatten_item,
     _format_datetime,
+    _get_session,
     get_rows,
     outreach_source,
     validate_credentials,
@@ -134,6 +135,18 @@ class TestFlattenItem:
         row = _flatten_item(item)
 
         assert "links" not in row
+
+
+class TestSession:
+    @mock.patch(f"{_MODULE}.make_tracked_session")
+    def test_session_opts_out_of_body_capture_and_redacts_secrets(self, mock_session: mock.MagicMock) -> None:
+        # Outreach rows are CRM records (names, emails, employers, mailing bodies, custom
+        # attributes) that the name-based scrubbers can't reliably redact, so raw bodies must
+        # never reach the shared HTTP sample store.
+        _get_session("sec", "rt")
+
+        assert mock_session.call_args.kwargs["capture"] is False
+        assert mock_session.call_args.kwargs["redact_values"] == ("sec", "rt")
 
 
 class TestValidateCredentials:

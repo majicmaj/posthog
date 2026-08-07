@@ -52,7 +52,13 @@ class OutreachResumeConfig:
 
 
 def _get_session(client_secret: str, refresh_token: str) -> requests.Session:
-    return make_tracked_session(headers=JSON_API_HEADERS, redact_values=(client_secret, refresh_token))
+    # capture=False keeps requests metered and logged but excludes their bodies from HTTP sample
+    # capture. Outreach is a CRM: rows carry prospect names, emails, phone numbers, employer and
+    # job-title fields, mailing subjects/bodies, and arbitrary tenant-defined custom attributes that
+    # the name-based scrubbers can't reliably recognise. Those bodies must not land in the shared
+    # sample store, which sits outside the warehouse's own access controls. The same session runs
+    # the OAuth token exchange, so the refresh-token/client-secret payloads are excluded too.
+    return make_tracked_session(headers=JSON_API_HEADERS, redact_values=(client_secret, refresh_token), capture=False)
 
 
 def _mint_token(session: requests.Session, client_id: str, client_secret: str, refresh_token: str) -> str:
