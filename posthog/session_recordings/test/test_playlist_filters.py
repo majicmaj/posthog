@@ -11,6 +11,10 @@ def _visited_page(value: str) -> dict:
     return {"type": "recording", "key": "visited_page", "value": value, "operator": "icontains"}
 
 
+def _session_id_filter(value) -> dict:
+    return {"type": "session", "key": "$session_id", "value": value, "operator": "exact"}
+
+
 def _filters(outer_type: str, inner_type: str, values: list[dict]) -> dict:
     return {
         "date_from": "-30d",
@@ -68,3 +72,23 @@ class TestConvertFiltersToRecordingsQuery(SimpleTestCase):
         }
         query = convert_filters_to_recordings_query(filters)
         assert query.operand == expected
+
+    @parameterized.expand(
+        [
+            ("list_value", ["0190abc", "0191def"], ["0190abc", "0191def"]),
+            ("single_value", "0190abc", ["0190abc"]),
+            ("drops_empty", ["0190abc", ""], ["0190abc"]),
+        ]
+    )
+    def test_session_id_filter_is_rerouted_to_session_ids(self, _name, value, expected):
+        # A `$session_id` property has no home on the sessions table — it would become an invalid
+        # `session.$session_id` in HogQL and 500. It must be pulled out into session_ids instead.
+        query = convert_filters_to_recordings_query(_filters("AND", "AND", [_session_id_filter(value)]))
+        assert query.session_ids == expected
+        assert query.properties == []
+
+    def test_first_class_session_ids_field_passes_through_and_merges_with_filter(self):
+        filters = _filters("AND", "AND", [_session_id_filter(["from-filter"])])
+        filters["session_ids"] = ["from-field"]
+        query = convert_filters_to_recordings_query(filters)
+        assert query.session_ids == ["from-field", "from-filter"]

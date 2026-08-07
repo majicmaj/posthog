@@ -25599,6 +25599,15 @@ class MaxRecordingUniversalFilters(BaseModel):
             " order direction here"
         ),
     )
+    session_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Pin the result to specific recordings by their session id. Use this to"
+            " show the exact sessions being referenced, e.g. the ones just summarized."
+            " `$session_id` is not a filterable session property, so never put it in"
+            " `filter_group`."
+        ),
+    )
 
 
 class MetricsQuery(BaseModel):

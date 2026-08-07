@@ -94,6 +94,10 @@ export function convertUniversalFiltersToRecordingsQuery(universalFilters: Recor
     const having_predicates: RecordingsQuery['having_predicates'] = []
     let comment_text: RecordingsQuery['comment_text'] = undefined
 
+    // `$session_id` has no home on the sessions table — a filter on it becomes an invalid
+    // `session.$session_id` in HogQL and 500s. Reroute any stray one (e.g. from Max) into session_ids.
+    const sessionIdsFromFilters: string[] = []
+
     // it was possible to store an invalid order key in local storage sometimes, let's just ignore that instead of erroring
     const order: RecordingsQuery['order'] = isValidRecordingOrder(universalFilters.order)
         ? universalFilters.order
@@ -106,7 +110,10 @@ export function convertUniversalFiltersToRecordingsQuery(universalFilters: Recor
     }
 
     filters.forEach((f) => {
-        if (isEventFilter(f)) {
+        if ('key' in f && f.key === '$session_id') {
+            const values = Array.isArray(f.value) ? f.value : f.value != null ? [f.value] : []
+            sessionIdsFromFilters.push(...values.map((v) => String(v)).filter((v) => v !== ''))
+        } else if (isEventFilter(f)) {
             events.push(normalizeFilterWithNestedProperties(f))
         } else if (isActionFilter(f)) {
             actions.push(normalizeFilterWithNestedProperties(f))
@@ -158,7 +165,10 @@ export function convertUniversalFiltersToRecordingsQuery(universalFilters: Recor
         filter_test_accounts: universalFilters.filter_test_accounts,
         operand: deriveOperand(universalFilters.filter_group),
         limit: universalFilters.limit,
-        session_ids: universalFilters.session_ids,
+        session_ids:
+            sessionIdsFromFilters.length > 0
+                ? [...(universalFilters.session_ids ?? []), ...sessionIdsFromFilters]
+                : universalFilters.session_ids,
     }
 }
 

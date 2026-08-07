@@ -22,6 +22,8 @@ export interface MaxRecordingUniversalFilters {
     order_direction?: RecordingsQuery['order_direction']
     /** How many recordings the user requested to use. Skip if user did not indicate preference. */
     limit?: RecordingsQuery['limit']
+    /** Pin the result to specific recordings by their session id. Use this to show the exact sessions being referenced, e.g. the ones just summarized. `$session_id` is not a filterable session property, so never put it in `filter_group`. */
+    session_ids?: RecordingsQuery['session_ids']
 }
 
 export type MaxOuterUniversalFiltersGroup = {

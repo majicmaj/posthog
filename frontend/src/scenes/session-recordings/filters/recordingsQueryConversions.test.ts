@@ -245,3 +245,44 @@ describe('convertUniversalFiltersToRecordingsQuery operand derivation', () => {
         expect(convertUniversalFiltersToRecordingsQuery(uf(outer, inner)).operand).toBe(expected)
     })
 })
+
+describe('convertUniversalFiltersToRecordingsQuery $session_id rerouting', () => {
+    // A `$session_id` filter has no home on the sessions table and 500s as `session.$session_id`.
+    // It must be pulled out of filter_group into session_ids instead.
+    const withSessionIdFilter = (value: any): RecordingUniversalFilters =>
+        ({
+            date_from: '-3d',
+            date_to: null,
+            duration: [],
+            filter_test_accounts: false,
+            filter_group: {
+                type: FilterLogicalOperator.And,
+                values: [
+                    {
+                        type: FilterLogicalOperator.And,
+                        values: [
+                            {
+                                type: PropertyFilterType.Session,
+                                key: '$session_id',
+                                value,
+                                operator: PropertyOperator.Exact,
+                            },
+                        ],
+                    },
+                ],
+            },
+        }) as RecordingUniversalFilters
+
+    it('moves a $session_id filter into session_ids and out of properties', () => {
+        const query = convertUniversalFiltersToRecordingsQuery(withSessionIdFilter(['0190abc', '0191def']))
+        expect(query.session_ids).toEqual(['0190abc', '0191def'])
+        expect(query.properties).toEqual([])
+    })
+
+    it('merges rerouted ids with a first-class session_ids field', () => {
+        const filters = withSessionIdFilter(['from-filter'])
+        filters.session_ids = ['from-field']
+        const query = convertUniversalFiltersToRecordingsQuery(filters)
+        expect(query.session_ids).toEqual(['from-field', 'from-filter'])
+    })
+})

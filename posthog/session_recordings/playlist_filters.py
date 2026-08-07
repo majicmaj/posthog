@@ -182,6 +182,23 @@ def convert_playlist_to_recordings_query(
     return convert_filters_to_recordings_query(filters)
 
 
+def _is_session_id_filter(f: dict[str, Any]) -> bool:
+    """A `$session_id` filter has no valid HogQL home — the sessions table has no such field.
+
+    Max sometimes emits one to pin specific recordings; it belongs in RecordingsQuery.session_ids,
+    not in a property filter, so we detect it here and reroute it (see normalization below).
+    """
+    return isinstance(f, dict) and f.get("key") == "$session_id"
+
+
+def _session_ids_from_filter(f: dict[str, Any]) -> list[str]:
+    value = f.get("value")
+    if value is None:
+        return []
+    values = value if isinstance(value, list) else [value]
+    return [str(v) for v in values if v is not None and str(v) != ""]
+
+
 def convert_filters_to_recordings_query(filters: dict[str, Any]) -> RecordingsQuery:
     """
     Convert universal filters to a RecordingsQuery object.
@@ -198,6 +215,10 @@ def convert_filters_to_recordings_query(filters: dict[str, Any]) -> RecordingsQu
     console_log_filters: list[Any] = []
     having_predicates: list[Any] = []
 
+    # Pin recordings by session id. Merge the first-class field with any stray `$session_id`
+    # property filter (from Max or an older thread) so it never reaches HogQL as `session.$session_id`.
+    session_ids: list[str] = list(filters.get("session_ids") or [])
+
     # Get order and duration filter
     order = filters.get("order")
     duration_filters = filters.get("duration", [])
@@ -208,7 +229,9 @@ def convert_filters_to_recordings_query(filters: dict[str, Any]) -> RecordingsQu
     for f in extracted_filters:
         filter_type = f.get("type")
 
-        if filter_type == "events":
+        if _is_session_id_filter(f):
+            session_ids.extend(_session_ids_from_filter(f))
+        elif filter_type == "events":
             events.append(f)
         elif filter_type == "actions":
             actions.append(f)
@@ -243,6 +266,7 @@ def convert_filters_to_recordings_query(filters: dict[str, Any]) -> RecordingsQu
             filter_test_accounts=filters.get("filter_test_accounts"),
             operand=_derive_operand(filters.get("filter_group")),
             limit=filters.get("limit"),
+            session_ids=session_ids or None,
         )
     except ValidationError as e:
         # we were seeing errors here and it was hard to debug
