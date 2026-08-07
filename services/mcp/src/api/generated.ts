@@ -26883,7 +26883,7 @@ export namespace Schemas {
       /** @nullable */
       first_seen: string | null;
       assignee: ErrorTrackingIssueAssigneeRead | null;
-      external_issues: ErrorTrackingExternalReferenceCreate[];
+      external_issues: ErrorTrackingExternalReferenceResult[];
       cohort: ErrorTrackingIssueCohortRead | null;
     }
 
@@ -53079,7 +53079,7 @@ export namespace Schemas {
       /** @nullable */
       first_seen?: string | null;
       assignee?: ErrorTrackingIssueAssigneeRead | null;
-      external_issues?: ErrorTrackingExternalReferenceCreate[];
+      external_issues?: ErrorTrackingExternalReferenceResult[];
       cohort?: ErrorTrackingIssueCohortRead | null;
     }
 
