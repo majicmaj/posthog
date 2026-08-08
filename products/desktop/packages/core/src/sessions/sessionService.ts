@@ -54,8 +54,8 @@ import {
   isTerminalStatus,
   type Task,
 } from "@posthog/shared/domain-types";
-import type { CommentTarget } from "../comments/anchors";
 import type { SendCommandOutput } from "../cloud-task/schemas";
+import type { CommentTarget } from "../comments/anchors";
 import type { SpeechKind, SpeechSource } from "../speech/identifiers";
 import {
   CONTEXT_WINDOW_OPTION_CATEGORY,
