@@ -74574,6 +74574,7 @@ export namespace Schemas {
      * * `pi/rpc` - pi/rpc
      * * `queue_get` - queue_get
      * * `queue_clear` - queue_clear
+     * * `side_question` - side_question
      */
     export type TaskRunCommandRequestMethodEnum = typeof TaskRunCommandRequestMethodEnum[keyof typeof TaskRunCommandRequestMethodEnum];
 
@@ -74588,6 +74589,7 @@ export namespace Schemas {
       PiRpc: 'pi/rpc',
       QueueGet: 'queue_get',
       QueueClear: 'queue_clear',
+      SideQuestion: 'side_question',
     } as const;
 
     /**
@@ -74608,7 +74610,8 @@ export namespace Schemas {
        * * `mcp_response` - mcp_response
        * * `pi/rpc` - pi/rpc
        * * `queue_get` - queue_get
-       * * `queue_clear` - queue_clear */
+       * * `queue_clear` - queue_clear
+       * * `side_question` - side_question */
       method: TaskRunCommandRequestMethodEnum;
       /** Parameters for the command */
       params?: TaskRunCommandRequestParams;

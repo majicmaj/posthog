@@ -1913,7 +1913,7 @@ class TaskRunViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
         summary="Send command to task run",
         description="Queue user_message JSON-RPC commands through the task workflow and forward sandbox control "
         "commands to the agent server. Supports user_message, cancel, close, permission_response, "
-        "set_config_option, mcp_response, native Pi RPC commands, and Pi queue operations.",
+        "set_config_option, mcp_response, side_question, native Pi RPC commands, and Pi queue operations.",
         strict_request_validation=True,
     )
     @action(
@@ -1946,6 +1946,16 @@ class TaskRunViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
             )
         request_id = request.validated_data.get("id")
         params = request.validated_data.get("params")
+
+        # Unlike user_message (deliberately ungated below so Inbox "Discuss" works),
+        # side_question is only surfaced by the Desktop client, so it can require Code access.
+        if method == "side_question" and not tasks_access.has_tasks_access(request.user):
+            return Response(
+                TaskRunErrorResponseSerializer(
+                    {"error": "side_question requires PostHog Code access.", "code": "code_access_required"}
+                ).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if method == "user_message":
             # No `has_tasks_access` check, for the same reason as `TaskViewSet.run`:
