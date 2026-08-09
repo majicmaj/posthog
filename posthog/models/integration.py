@@ -1834,17 +1834,26 @@ class OauthIntegration:
             if allowed_host:
                 revoke_url = f"{allowed_host}/services/oauth2/revoke"
 
-        data = {"token": token}
-        json_body: dict[str, str] | None = None
-        auth: HTTPBasicAuth | None = None
+        # allow_redirects=False so a misconfigured/compromised provider can't 30x us into
+        # resending the token to another host. raise_for_status surfaces a provider rejection
+        # to the caller's capture_exception instead of it passing silently as a revoke.
         if self.integration.kind == "quickbooks":
             # Intuit's revocation endpoint takes a JSON body and authenticates the app with HTTP
             # Basic client credentials rather than form fields — a form-encoded, unauthenticated
             # POST is rejected and the grant would survive the disconnect. Either token type is
             # accepted and revoking one kills the whole grant.
-            json_body = {"token": token}
-            auth = HTTPBasicAuth(oauth_config.client_id, oauth_config.client_secret)
-        elif self.integration.kind == "resend":
+            quickbooks_response = requests.post(
+                revoke_url,
+                json={"token": token},
+                auth=HTTPBasicAuth(oauth_config.client_id, oauth_config.client_secret),
+                timeout=10,
+                allow_redirects=False,
+            )
+            quickbooks_response.raise_for_status()
+            return
+
+        data = {"token": token}
+        if self.integration.kind == "resend":
             # Resend registers PostHog as a confidential client (token_endpoint_auth_method=
             # client_secret_post) and requires client authentication on revocation. Without it
             # the endpoint rejects the request and the grant survives the disconnect. The hint
@@ -1853,14 +1862,9 @@ class OauthIntegration:
             data["client_secret"] = oauth_config.client_secret
             data["token_type_hint"] = "refresh_token" if refresh_token else "access_token"
 
-        # allow_redirects=False so a misconfigured/compromised provider can't 30x us into
-        # resending the token to another host. raise_for_status surfaces a provider rejection
-        # to the caller's capture_exception instead of it passing silently as a revoke.
         response = requests.post(
             revoke_url,
-            data=None if json_body is not None else data,
-            json=json_body,
-            auth=auth,
+            data=data,
             timeout=10,
             allow_redirects=False,
         )

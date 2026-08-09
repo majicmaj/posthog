@@ -4747,7 +4747,7 @@ class TestQuickBooksIntegrationModel(BaseTest):
         # Intuit's endpoint is JSON-bodied and authenticates the app with HTTP Basic — a
         # form-encoded, unauthenticated POST is rejected and the grant would survive.
         assert mock_post.call_args.kwargs["json"] == {"token": "rt_1"}
-        assert mock_post.call_args.kwargs["data"] is None
+        assert "data" not in mock_post.call_args.kwargs
         auth = mock_post.call_args.kwargs["auth"]
         assert (auth.username, auth.password) == ("qb-client-id", "qb-client-secret")
         assert mock_post.call_args.kwargs["allow_redirects"] is False
