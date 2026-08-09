@@ -86,8 +86,39 @@ export interface BillingPeriodResponseApi {
     current_period_end: string | null
 }
 
+/**
+ * * `type` - type
+ * * `team` - team
+ * * `multiple` - multiple
+ */
+export type BreakdownTypeEnumApi = (typeof BreakdownTypeEnumApi)[keyof typeof BreakdownTypeEnumApi]
+
+export const BreakdownTypeEnumApi = {
+    Type: 'type',
+    Team: 'team',
+    Multiple: 'multiple',
+} as const
+
+export interface BillingTimeSeriesPointApi {
+    id?: number
+    label?: string
+    data?: number[]
+    dates?: string[]
+    breakdown_type?: BreakdownTypeEnumApi | null
+    breakdown_value?: unknown
+}
+
+export interface BillingTimeSeriesResponseApi {
+    status?: string
+    type?: string
+    customer_id?: string
+    results: BillingTimeSeriesPointApi[]
+    team_id_options?: number[]
+    next?: string
+}
 export type BillingSpendRetrieveParams = {
     /**
+     * JSON-encoded array of breakdown dimensions. Valid values are "type" and "team", for example ["type","team"]. Omit for a single aggregate series.
      * @nullable
      */
     breakdowns?: string | null
@@ -104,6 +135,7 @@ export type BillingSpendRetrieveParams = {
      */
     start_date?: string | null
     /**
+     * JSON-encoded array of numeric team/project IDs to filter on, for example [1,2]. Omit for all teams in the organization.
      * @nullable
      */
     team_ids?: string | null
@@ -116,6 +148,7 @@ export type BillingSpendRetrieveParams = {
 
 export type BillingUsageRetrieveParams = {
     /**
+     * JSON-encoded array of breakdown dimensions. Valid values are "type" and "team", for example ["type","team"]. Omit for a single aggregate series.
      * @nullable
      */
     breakdowns?: string | null
@@ -132,6 +165,7 @@ export type BillingUsageRetrieveParams = {
      */
     start_date?: string | null
     /**
+     * JSON-encoded array of numeric team/project IDs to filter on, for example [1,2]. Omit for all teams in the organization.
      * @nullable
      */
     team_ids?: string | null
