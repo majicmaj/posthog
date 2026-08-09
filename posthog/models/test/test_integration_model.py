@@ -4674,9 +4674,7 @@ class TestMercadoPagoIntegrationModel(BaseTest):
         query = parse_qs(urlparse(url).query)
         verifier = cache.get("oauth_pkce_verifier/pkce_state_token")
         assert verifier
-        expected_challenge = (
-            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-        )
+        expected_challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         assert query["code_challenge"] == [expected_challenge]
         assert query["code_challenge_method"] == ["S256"]
 
