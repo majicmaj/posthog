@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("posthog", "1290_backfill_identity_provider_config_identifiers"),
+        ("posthog", "1296_backfill_cimd_verification_token_url"),
     ]
 
     operations = [
@@ -37,6 +37,7 @@ class Migration(migrations.Migration):
                     ("gitlab", "Gitlab"),
                     ("google-ads", "Google Ads"),
                     ("google-analytics", "Google Analytics"),
+                    ("google-calendar", "Google Calendar"),
                     ("google-cloud-service-account", "Google Cloud Service Account"),
                     ("google-cloud-storage", "Google Cloud Storage"),
                     ("google-pubsub", "Google Pubsub"),
