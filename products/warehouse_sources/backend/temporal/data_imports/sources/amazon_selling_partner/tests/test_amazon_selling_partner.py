@@ -548,6 +548,36 @@ class TestSalesAndTrafficReport:
         assert all(call.kwargs.get("capture") is False for call in mock_session.call_args_list)
 
     @mock.patch(f"{_MODULE}.make_tracked_session")
+    def test_download_failure_does_not_leak_the_presigned_url(self, mock_session: mock.MagicMock) -> None:
+        presigned = (
+            "https://s3.example/doc?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+            "&X-Amz-Credential=AKIAEXAMPLEKEYID%2F20240501%2Fus-east-1%2Fs3%2Faws4_request"
+            "&X-Amz-Security-Token=FwoGZXIvYXdzEXAMPLESESSIONTOKEN"
+            "&X-Amz-Signature=6fc0e5a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d"
+        )
+        mock_session.return_value.request.side_effect = [
+            _response({"reportId": "R1"}),
+            _response({"processingStatus": "DONE", "reportDocumentId": "D1"}),
+            _response({"url": presigned}),
+        ]
+        # What `requests` actually raises: the message carries the whole request URL.
+        mock_session.return_value.get.side_effect = requests.HTTPError(f"403 Client Error for url: {presigned}")
+
+        with pytest.raises(AmazonSellingPartnerReportError) as excinfo:
+            _collect(
+                "sales_and_traffic",
+                should_use_incremental_field=True,
+                db_incremental_field_last_value=self._recent_watermark(),
+            )
+
+        message = str(excinfo.value)
+        assert "D1" in message and "HTTPError" in message
+        for secret in ("X-Amz-Signature=6fc0e5a1", "AKIAEXAMPLEKEYID", "FwoGZXIvYXdzEXAMPLESESSIONTOKEN"):
+            assert secret not in message
+        # The original exception is suppressed so its message can't be re-read off `__cause__`.
+        assert excinfo.value.__cause__ is None
+
+    @mock.patch(f"{_MODULE}.make_tracked_session")
     def test_uncompressed_document_is_parsed_too(self, mock_session: mock.MagicMock) -> None:
         rows = [{"date": "2024-05-01"}]
         mock_session.return_value.request.side_effect = [

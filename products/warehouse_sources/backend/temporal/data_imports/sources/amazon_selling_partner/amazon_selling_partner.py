@@ -6,6 +6,7 @@ import dataclasses
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Optional
+from urllib.parse import parse_qsl, urlsplit
 
 import requests
 from structlog.types import FilteringBoundLogger
@@ -20,6 +21,7 @@ from products.warehouse_sources.backend.temporal.data_imports.sources.amazon_sel
     SpApiEndpointConfig,
 )
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.http import make_tracked_session
+from products.warehouse_sources.backend.temporal.data_imports.sources.common.http.url_utils import redact_literal_values
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.resumable import ResumableSourceManager
 from products.warehouse_sources.backend.temporal.data_imports.sources.common.typings import SourceResponse
 
@@ -50,6 +52,9 @@ REPORT_PENDING_STATUSES = frozenset({"IN_QUEUE", "IN_PROGRESS"})
 MAX_MARKETPLACE_IDS = 50
 MARKETPLACE_ID_MAX_LENGTH = 32
 MARKETPLACE_ID_PATTERN = re.compile(r"[A-Za-z0-9]+")
+# The load-bearing secrets in an AWS SigV4 presigned report-document URL. Redacted by value
+# (not just by param name) before a download failure is turned into a job error.
+PRESIGNED_CREDENTIAL_PARAMS = frozenset({"x-amz-signature", "x-amz-credential", "x-amz-security-token"})
 
 
 class AmazonSellingPartnerRetryableError(Exception):
@@ -462,6 +467,18 @@ def _poll_report_document_id(
     )
 
 
+def _scrub_presigned(text: str, url: str) -> str:
+    """Redact a presigned S3 URL, and its signing params on their own, out of `text`."""
+    secrets = [url]
+    try:
+        for name, value in parse_qsl(urlsplit(url).query, keep_blank_values=True):
+            if name.lower() in PRESIGNED_CREDENTIAL_PARAMS and value:
+                secrets.append(value)
+    except Exception:
+        pass
+    return redact_literal_values(text, secrets)
+
+
 def _download_report_document(client: SellingPartnerClient, document_id: str) -> dict[str, Any]:
     """Fetch a report document's presigned URL and return its parsed JSON body."""
     document = _unwrap(client.request("GET", f"{REPORT_DOCUMENTS_PATH}/{document_id}"))
@@ -474,8 +491,18 @@ def _download_report_document(client: SellingPartnerClient, document_id: str) ->
     # `capture=False`: the response body is the seller's report (buyer PII) and the URL
     # carries AWS `X-Amz-*` signing credentials, so keep it out of HTTP sample capture.
     download_session = make_tracked_session(capture=False)
-    response = download_session.get(str(url), timeout=REQUEST_TIMEOUT_SECONDS)
-    response.raise_for_status()
+    try:
+        response = download_session.get(str(url), timeout=REQUEST_TIMEOUT_SECONDS)
+        response.raise_for_status()
+    except requests.RequestException as err:
+        # `requests` puts the request URL in the exception message, and this one is a presigned
+        # S3 link whose query string *is* the credential. Job errors are persisted and rendered
+        # in the UI, so re-raise with the signing params redacted and suppress the original
+        # exception — its message and traceback would carry the raw URL straight back in.
+        raise AmazonSellingPartnerReportError(
+            f"Failed to download report document {document_id}: {type(err).__name__}: "
+            f"{_scrub_presigned(str(err), str(url))}"
+        ) from None
 
     content = response.content
     if document.get("compressionAlgorithm") == "GZIP":
