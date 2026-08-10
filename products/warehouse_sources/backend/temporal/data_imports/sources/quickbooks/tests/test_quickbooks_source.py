@@ -318,6 +318,38 @@ class TestQuickBooksSource:
         )
         mock_validate.assert_not_called()
 
+    @mock.patch(f"{_SOURCE_MODULE}.validate_quickbooks_credentials")
+    @mock.patch.object(QuickBooksSource, "get_oauth_integration")
+    def test_validate_credentials_without_an_access_token(
+        self, mock_get_integration: mock.MagicMock, mock_validate: mock.MagicMock
+    ) -> None:
+        # An unexpired row whose token was never stored (or was stripped): nothing to refresh, so
+        # this has to be caught before a bare `Authorization: Bearer None` reaches Intuit.
+        mock_get_integration.return_value = _integration(access_token=None)
+
+        is_valid, error_message = self.source.validate_credentials(self.config, self.team_id)
+
+        assert is_valid is False
+        assert error_message == (
+            "The QuickBooks connection has no access token. Please reconnect your QuickBooks company."
+        )
+        mock_validate.assert_not_called()
+
+    @mock.patch(f"{_SOURCE_MODULE}.validate_quickbooks_credentials")
+    @mock.patch.object(QuickBooksSource, "get_oauth_integration")
+    def test_validate_credentials_passes_through_an_unmapped_error(
+        self, mock_get_integration: mock.MagicMock, mock_validate: mock.MagicMock
+    ) -> None:
+        # Nothing in get_non_retryable_errors matches, so the raw message is surfaced rather than
+        # swallowed into a generic failure.
+        mock_get_integration.side_effect = ValueError("Something else went wrong")
+
+        is_valid, error_message = self.source.validate_credentials(self.config, self.team_id)
+
+        assert is_valid is False
+        assert error_message == "Something else went wrong"
+        mock_validate.assert_not_called()
+
     def test_get_resumable_source_manager_binds_resume_config(self) -> None:
         manager = self.source.get_resumable_source_manager(mock.MagicMock())
 
