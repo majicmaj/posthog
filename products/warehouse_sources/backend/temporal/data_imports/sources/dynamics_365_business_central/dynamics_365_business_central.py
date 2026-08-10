@@ -240,8 +240,11 @@ def dynamics_365_business_central_source(
             "auth": build_auth(tenant_id, client_id, client_secret),
             # The client secret only ever leaves the process in the Entra token exchange (which
             # builds its own session), but redact it here too so it can never surface in a logged
-            # URL or sampled body from the data requests.
-            "session": make_tracked_session(redact_values=(client_secret,)),
+            # URL from the data requests. `capture=False`: these rows are ledger entries, payments,
+            # bank-account and tax fields the name-based scrubbers can't recognise, so the bodies
+            # stay out of the HTTP sample store (requests are still metered and logged) rather than
+            # becoming readable outside the warehouse table access path.
+            "session": make_tracked_session(redact_values=(client_secret,), capture=False),
             "paginator": JSONResponsePaginator(next_url_path=NEXT_LINK_PATH),
             # `@odata.nextLink` comes back from the API, so pin it (and any resumed URL) to the
             # Business Central host and reject redirects — the bearer token must not follow a

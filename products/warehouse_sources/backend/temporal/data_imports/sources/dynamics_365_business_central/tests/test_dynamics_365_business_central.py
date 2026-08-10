@@ -311,6 +311,22 @@ class TestGetRows:
 
     @mock.patch(AUTH_SESSION_PATCH)
     @mock.patch(SESSION_PATCH)
+    def test_row_bodies_are_kept_out_of_http_sample_capture(
+        self, mock_session: mock.MagicMock, mock_auth_session: mock.MagicMock
+    ) -> None:
+        # Rows carry ledger, payment, bank-account and tax fields the name-based scrubbers can't
+        # recognise, so the sync session must opt out of body capture. Dropping `capture=False`
+        # would persist raw financial records to the HTTP sample store.
+        _wire_token(mock_auth_session)
+        _wire(mock_session.return_value, [("/companies", _response(_page([])))])
+
+        _rows(_source("companies", _make_manager()))
+
+        assert mock_session.call_args.kwargs["capture"] is False
+        assert mock_session.call_args.kwargs["redact_values"] == ("client-secret",)
+
+    @mock.patch(AUTH_SESSION_PATCH)
+    @mock.patch(SESSION_PATCH)
     def test_company_scoped_endpoint_fans_out_and_stamps_the_company(
         self, mock_session: mock.MagicMock, mock_auth_session: mock.MagicMock
     ) -> None:
