@@ -41,6 +41,10 @@ from products.warehouse_sources.backend.types import ExternalDataSourceType
 # Written onto the integration during the OAuth callback from Intuit's `realmId` param.
 REALM_ID_CONFIG_KEY = "quickbooks_realm_id"
 
+# `Integration.kind` this source will accept — shared by the OAuth field and the lookup below so
+# the kind offered in the wizard and the kind enforced at sync time cannot drift apart.
+INTEGRATION_KIND = "quickbooks"
+
 _MISSING_REALM_ID_ERROR = "QuickBooks company ID is missing from this connection"
 _TOKEN_REFRESH_FAILED_ERROR = "QuickBooks access token could not be refreshed"
 _MISSING_ACCESS_TOKEN_ERROR = "QuickBooks access token not found"
@@ -98,7 +102,7 @@ Pick Sandbox only if you are connecting an Intuit sandbox company.""",
                         name="quickbooks_integration_id",
                         label="QuickBooks company",
                         required=True,
-                        kind="quickbooks",
+                        kind=INTEGRATION_KIND,
                         requiredScopes="com.intuit.quickbooks.accounting",
                     ),
                     # Intuit runs one app across production and sandbox, so the environment only
@@ -136,7 +140,15 @@ Pick Sandbox only if you are connecting an Intuit sandbox company.""",
         return build_endpoint_schemas(ENDPOINTS, INCREMENTAL_FIELDS, names)
 
     def _get_integration(self, config: QuickBooksSourceConfig, team_id: int) -> Integration:
-        return self.get_oauth_integration(config.quickbooks_integration_id, team_id)
+        integration = self.get_oauth_integration(config.quickbooks_integration_id, team_id)
+        # `get_oauth_integration` scopes by ID and team only, so a same-team integration of any
+        # other kind would otherwise be accepted here and have its bearer token sent to Intuit.
+        # Deliberately the same message as a missing row: from this source's point of view a
+        # non-QuickBooks integration is not a connection it can use, and reusing the wording keeps
+        # it mapped to the curated non-retryable error below.
+        if integration.kind != INTEGRATION_KIND:
+            raise ValueError(f"Integration not found: {config.quickbooks_integration_id}")
+        return integration
 
     def _get_realm_id(self, integration: Integration) -> str:
         # Written during the OAuth callback; `integration_id` holds the same value and covers rows

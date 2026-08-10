@@ -33,12 +33,13 @@ def _integration(
     access_token: str | None = "access-token",
     integration_id: str | None = _REALM_ID,
     expired: bool = False,
+    kind: str = "quickbooks",
 ) -> Integration:
     """An unsaved integration row shaped like one the QuickBooks OAuth callback writes."""
     return Integration(
         id=_INTEGRATION_ID,
         team_id=123,
-        kind="quickbooks",
+        kind=kind,
         integration_id=integration_id,
         config={
             **({"quickbooks_realm_id": realm_id} if realm_id else {}),
@@ -222,6 +223,37 @@ class TestQuickBooksSource:
         assert error_message == expected_message
         assert "42" not in (error_message or "")
         mock_validate.assert_not_called()
+
+    @mock.patch(f"{_SOURCE_MODULE}.validate_quickbooks_credentials")
+    @mock.patch.object(QuickBooksSource, "get_oauth_integration")
+    def test_validate_credentials_rejects_an_integration_of_another_kind(
+        self, mock_get_integration: mock.MagicMock, mock_validate: mock.MagicMock
+    ) -> None:
+        # The lookup only scopes by ID and team, so a same-team integration of another kind is
+        # reachable by ID. Its bearer token must never be handed to Intuit.
+        mock_get_integration.return_value = _integration(kind="salesforce")
+
+        is_valid, error_message = self.source.validate_credentials(self.config, self.team_id)
+
+        assert is_valid is False
+        assert error_message == (
+            "The linked QuickBooks connection no longer exists. Please reconnect your QuickBooks company."
+        )
+        mock_validate.assert_not_called()
+
+    @mock.patch(f"{_SOURCE_MODULE}.quickbooks_source")
+    @mock.patch.object(QuickBooksSource, "get_oauth_integration")
+    def test_source_for_pipeline_rejects_an_integration_of_another_kind(
+        self, mock_get_integration: mock.MagicMock, mock_quickbooks_source: mock.MagicMock
+    ) -> None:
+        mock_get_integration.return_value = _integration(kind="salesforce")
+        inputs = mock.MagicMock()
+        inputs.team_id = self.team_id
+
+        with pytest.raises(ValueError, match=f"Integration not found: {_INTEGRATION_ID}"):
+            self.source.source_for_pipeline(self.config, mock.MagicMock(), inputs)
+
+        mock_quickbooks_source.assert_not_called()
 
     @mock.patch(f"{_SOURCE_MODULE}.validate_quickbooks_credentials")
     @mock.patch.object(QuickBooksSource, "get_oauth_integration")
