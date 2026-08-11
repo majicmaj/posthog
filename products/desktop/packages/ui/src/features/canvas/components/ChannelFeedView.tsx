@@ -239,7 +239,7 @@ export function TaskSummaryRow({
     <Link
       {...taskCardNavigation(channelId, task.id)}
       preload="intent"
-      className="flex min-w-0 items-center gap-2 border-b px-3 py-2 text-inherit no-underline outline-none transition-colors hover:bg-fill-hover focus-visible:ring-2 focus-visible:ring-(--accent-8)"
+      className="flex min-w-0 items-center gap-2 border-b px-3 py-2 text-inherit no-underline outline-none transition-colors hover:bg-fill-hover focus-visible:ring-(--accent-8) focus-visible:ring-2"
     >
       <TaskTabIcon task={task} size={14} />
       <span className="min-w-0 flex-1 truncate font-medium text-[13px]">
@@ -362,65 +362,64 @@ export function ExpandablePrompt({
   // find how much fits, leaving room for the toggle; the visible body renders
   // the cut. Measuring the full text (not the visible, already-cut text) keeps
   // the ResizeObserver stable instead of oscillating as content swaps.
-  const observerRef = useRef<ResizeObserver | null>(null);
+  const [measure, setMeasure] = useState<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [cut, setCut] = useState<string | null>(null);
 
-  const measureRef = useCallback(
-    (measure: HTMLDivElement | null) => {
-      observerRef.current?.disconnect();
-      observerRef.current = null;
-      if (!measure || expanded) return;
+  const measureRef = useCallback((node: HTMLDivElement | null) => {
+    setMeasure(node);
+  }, []);
 
-      const compute = () => {
-        const lineHeight = parseFloat(getComputedStyle(measure).lineHeight);
-        const maxHeight = lineHeight * lines;
-        if (measure.scrollHeight <= maxHeight + 0.5) {
-          setCut(null);
-          return;
-        }
-        // Find the longest prefix that still fits in `lines` once "…more" is
-        // appended — so the toggle can sit inline right after the ellipsis on the
-        // last line. We probe by swapping the measure's text node to "prefix…more"
-        // and reading scrollHeight (no per-line geometry), then restore it so the
-        // next resize re-measures against the uncut prompt. `children` is the
-        // source of truth (and a dep below) so a polled prompt update re-measures
-        // even when its rendered size is unchanged.
-        const text = measure.lastChild;
-        if (text?.nodeType !== Node.TEXT_NODE) {
-          setCut(null);
-          return;
-        }
-        const fits = (end: number) => {
-          text.nodeValue = `${children.slice(0, end).trimEnd()}…more`;
-          return measure.scrollHeight <= maxHeight + 0.5;
-        };
-        let lo = 0;
-        let hi = children.length;
-        let best = 0;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          if (fits(mid)) {
-            best = mid;
-            lo = mid + 1;
-          } else {
-            hi = mid - 1;
-          }
-        }
-        text.nodeValue = children;
-        // Even when no full character fits alongside "…more" (best === 0, only at
-        // extreme narrow widths), still cut so the toggle shows and the prompt
-        // stays expandable instead of silently clipped.
-        setCut(`${children.slice(0, best).trimEnd()}…`);
+  useEffect(() => {
+    if (!measure || expanded) return;
+
+    const compute = () => {
+      const lineHeight = parseFloat(getComputedStyle(measure).lineHeight);
+      const maxHeight = lineHeight * lines;
+      if (measure.scrollHeight <= maxHeight + 0.5) {
+        setCut(null);
+        return;
+      }
+      // Find the longest prefix that still fits in `lines` once "…more" is
+      // appended — so the toggle can sit inline right after the ellipsis on the
+      // last line. We probe by swapping the measure's text node to "prefix…more"
+      // and reading scrollHeight (no per-line geometry), then restore it so the
+      // next resize re-measures against the uncut prompt. `children` is the
+      // source of truth (and a dep below) so a polled prompt update re-measures
+      // even when its rendered size is unchanged.
+      const text = measure.lastChild;
+      if (text?.nodeType !== Node.TEXT_NODE) {
+        setCut(null);
+        return;
+      }
+      const fits = (end: number) => {
+        text.nodeValue = `${children.slice(0, end).trimEnd()}…more`;
+        return measure.scrollHeight <= maxHeight + 0.5;
       };
+      let lo = 0;
+      let hi = children.length;
+      let best = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (fits(mid)) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      text.nodeValue = children;
+      // Even when no full character fits alongside "…more" (best === 0, only at
+      // extreme narrow widths), still cut so the toggle shows and the prompt
+      // stays expandable instead of silently clipped.
+      setCut(`${children.slice(0, best).trimEnd()}…`);
+    };
 
-      compute();
-      const observer = new ResizeObserver(compute);
-      observer.observe(measure);
-      observerRef.current = observer;
-    },
-    [children, expanded, lines],
-  );
+    compute();
+    const observer = new ResizeObserver(compute);
+    observer.observe(measure);
+    return () => observer.disconnect();
+  }, [children, expanded, lines, measure]);
 
   const truncated = cut !== null;
   const displayText = expanded || !truncated ? children : cut;
@@ -681,7 +680,7 @@ const FeedItem = memo(function FeedItem({
           <ExpandablePrompt
             lines={2}
             expandedContent={
-              <div className="[&_pre]:my-1.5 whitespace-normal text-(--gray-11)">
+              <div className="whitespace-normal text-(--gray-11) [&_pre]:my-1.5">
                 <MarkdownRenderer content={prompt} />
               </div>
             }
