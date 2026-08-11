@@ -1101,8 +1101,8 @@ export function ChannelFeedView({
   return (
     <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full px-4 pt-4 pb-10">
-        {composerBlock}
         {intro && <div className="mx-auto w-full max-w-[660px]">{intro}</div>}
+        {composerBlock}
         {rows}
       </div>
     </div>

@@ -31,6 +31,7 @@ import { useChannelsLayout } from "@posthog/ui/features/canvas/hooks/useChannels
 import { useChannelTaskMutations } from "@posthog/ui/features/canvas/hooks/useChannelTasks";
 import { useFolderInstructions } from "@posthog/ui/features/canvas/hooks/useFolderInstructions";
 import { useTaskChannels } from "@posthog/ui/features/canvas/hooks/useTaskChannels";
+import { useChannelIntroStore } from "@posthog/ui/features/canvas/stores/channelIntroStore";
 import {
   type ThreadPanelTab,
   useThreadPanelStore,
@@ -238,13 +239,18 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
       : isBuildingContextMd
         ? "building"
         : "none";
+  const introDismissed = useChannelIntroStore(
+    (s) => !!s.dismissedByChannel[channelId],
+  );
+  const dismissIntro = useChannelIntroStore((s) => s.dismissIntro);
   const intro =
-    !isPersonal && channelName && channel ? (
+    !isPersonal && !introDismissed && channelName && channel ? (
       <ChannelIntro
         channel={channel}
         channelName={channelName}
         contextMdState={contextMdState}
         onCreateContextMd={() => setContextMdDialogOpen(true)}
+        onDismiss={() => dismissIntro(channelId)}
       />
     ) : undefined;
 
