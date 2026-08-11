@@ -937,7 +937,10 @@ const FeedItem = memo(function FeedItem({
             <HoverPopover
               trigger={
                 <span className="inline-flex cursor-default">
-                  <AvatarGroup size="xs" stacked>
+                  {/* reverse: the stack sits at the card's right edge, so the
+                      hover expansion must spread left, into the card — the
+                      default spreads right, off the edge and clipped. */}
+                  <AvatarGroup size="xs" stacked reverse>
                     {authors.map((author) => (
                       <UserAvatar key={author.uuid} user={author} size="xs" />
                     ))}
