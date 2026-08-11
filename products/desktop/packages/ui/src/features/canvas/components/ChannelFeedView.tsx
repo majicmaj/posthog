@@ -307,13 +307,9 @@ function channelTaskStarter(task: Task): UserBasic | null {
 export function ExpandablePrompt({
   children,
   lines,
-  prefix,
 }: {
   children: string;
   lines: 2 | 4;
-  /** Rendered inline before the prompt (e.g. the author's name) and included
-   * in the truncation measurement, so "Author: prompt…" clamps as one flow. */
-  prefix?: ReactNode;
 }) {
   // The prompt is truncated by hand — not with -webkit-line-clamp — so the
   // "more" toggle can sit inline right after the ellipsis on the last visible
@@ -344,8 +340,7 @@ export function ExpandablePrompt({
         // and reading scrollHeight (no per-line geometry), then restore it so the
         // next resize re-measures against the uncut prompt. `children` is the
         // source of truth (and a dep below) so a polled prompt update re-measures
-        // even when its rendered size is unchanged. The prompt is the measure's
-        // last node — an inline `prefix` may render before it.
+        // even when its rendered size is unchanged.
         const text = measure.lastChild;
         if (text?.nodeType !== Node.TEXT_NODE) {
           setCut(null);
@@ -400,14 +395,12 @@ export function ExpandablePrompt({
         className="pointer-events-none invisible absolute top-0 right-0 left-0"
       >
         <div ref={measureRef} className="wrap-break-word whitespace-pre-line">
-          {prefix}
           {children}
         </div>
       </div>
       <div
         className={cn(!expanded && clampClass, !expanded && "overflow-hidden")}
       >
-        {prefix}
         {displayText}
         {truncated && (
           <button
@@ -528,14 +521,17 @@ const FeedItem = memo(function FeedItem({
     () => messages.filter((m) => (m.author_kind ?? "human") === "human"),
     [messages],
   );
+  // The starter leads the facepile — it's how the card attributes the task
+  // (the prompt itself carries no name) — followed by comment participants.
   const authors = useMemo(() => {
     const seen = new Map<string, UserBasic>();
+    if (starter) seen.set(starter.uuid, starter);
     for (const message of humanMessages) {
       const author = message.author;
       if (author && !seen.has(author.uuid)) seen.set(author.uuid, author);
     }
     return [...seen.values()].slice(0, 4);
-  }, [humanMessages]);
+  }, [humanMessages, starter]);
   const markRead = useCallback(() => {
     markTasksRead([
       { task_id: task.id, seen_before: new Date().toISOString() },
@@ -606,16 +602,8 @@ const FeedItem = memo(function FeedItem({
           <TaskStatusBadge display={statusDisplay} />
         </div>
         <div className="mt-1.5 text-(--gray-9) text-xs leading-normal">
-          <ExpandablePrompt
-            lines={2}
-            prefix={
-              <span className="font-medium text-(--gray-11)">
-                {starter ? userDisplayName(starter) : "PostHog"}:{" "}
-              </span>
-            }
-          >
-            {prompt ||
-              (starter ? "started a new task" : "A new task was started")}
+          <ExpandablePrompt lines={2}>
+            {prompt || "A new task was started"}
           </ExpandablePrompt>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -694,10 +682,7 @@ const FeedItem = memo(function FeedItem({
           ) : (
             <button
               type="button"
-              className={cn(
-                CHIP_CLASS,
-                "border-transparent bg-transparent text-(--gray-9)",
-              )}
+              className={CHIP_CLASS}
               onClick={(event) => {
                 event.stopPropagation();
                 onOpenThread(task, "comments");
@@ -778,12 +763,7 @@ function PendingFeedRow({ pending }: { pending: PendingKickoff }) {
           </Badge>
         </div>
         <div className="mt-1.5 text-(--gray-9) text-xs leading-normal">
-          <ExpandablePrompt
-            lines={2}
-            prefix={<span className="font-medium text-(--gray-11)">You: </span>}
-          >
-            {pending.prompt}
-          </ExpandablePrompt>
+          <ExpandablePrompt lines={2}>{pending.prompt}</ExpandablePrompt>
         </div>
       </CardContent>
     </Card>
