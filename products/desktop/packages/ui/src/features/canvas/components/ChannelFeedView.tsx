@@ -1,8 +1,8 @@
 import {
   ArrowSquareOutIcon,
   ChatCircleIcon,
+  FileIcon,
   GitBranchIcon,
-  LinkIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
 import { taskFeedRunStatus } from "@posthog/core/canvas/channelFeed";
@@ -25,22 +25,24 @@ import {
   ChatMessageScrollerProvider,
   ChatMessageScrollerViewport,
   cn,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Spinner,
   ThreadItem,
-  ThreadItemAction,
-  ThreadItemActions,
   ThreadItemAuthor,
   ThreadItemBody,
   ThreadItemContent,
   ThreadItemGutter,
   ThreadItemHeader,
-  ThreadItemReplies,
-  ThreadItemRepliesLabel,
-  ThreadItemRepliesMeta,
   ThreadItemTimestamp,
   useChatMessageScroller,
 } from "@posthog/quill";
-import { formatRelativeTimeShort } from "@posthog/shared";
+import {
+  formatRelativeTimeShort,
+  mergePrUrls,
+  readPrUrls,
+} from "@posthog/shared";
 import type {
   Task,
   TaskRunStatus,
@@ -48,18 +50,20 @@ import type {
 } from "@posthog/shared/domain-types";
 import { UserAvatar } from "@posthog/ui/features/auth/UserAvatar";
 import { TaskTabIcon } from "@posthog/ui/features/browser-tabs/TaskTabIcon";
+import { buildRows } from "@posthog/ui/features/canvas/components/taskArtifactRows";
 import type { ChannelFeedSystemMessage } from "@posthog/ui/features/canvas/hooks/useChannelFeedMessages";
 import { useChannelTaskData } from "@posthog/ui/features/canvas/hooks/useChannelTaskData";
 import { useMarkTaskActivityRead } from "@posthog/ui/features/canvas/hooks/useMarkTaskActivityRead";
 import { useTaskThread } from "@posthog/ui/features/canvas/hooks/useTaskThread";
 import { taskCardNavigation } from "@posthog/ui/features/canvas/taskCardNavigation";
-import { copyChannelLink } from "@posthog/ui/features/canvas/utils/copyChannelLink";
 import { userDisplayName } from "@posthog/ui/features/canvas/utils/userDisplay";
+import { usePrArtifact } from "@posthog/ui/features/git-interaction/usePrArtifact";
 import {
   type SidebarPrState,
   useTaskPrStatus,
 } from "@posthog/ui/features/sidebar/useTaskPrStatus";
 import { useInView } from "@posthog/ui/primitives/hooks/useInView";
+import { openExternalUrl } from "@posthog/ui/shell/openExternal";
 import { Text } from "@radix-ui/themes";
 import { Link } from "@tanstack/react-router";
 import {
@@ -106,7 +110,6 @@ interface TaskStatusDisplay {
   base: ReactNode;
   // The PR's GitHub state, shown alongside the run badge when a PR exists.
   prState: Exclude<SidebarPrState, null> | null;
-  // Whether the PR has merged — the card lifts this to a purple border + tint.
   isMerged: boolean;
 }
 
@@ -297,80 +300,13 @@ export function TaskCard({
   );
 }
 
-// The reply row under the card, always present at a constant height: the
-// Slack-style teaser (author facepile, count, last-reply time) once the thread
-// has messages, and a quiet "Reply" affordance otherwise. Keeping the row
-// mounted at a fixed height means the teaser swaps in after the thread fetch
-// lands without shifting the feed — and it surfaces an always-visible way into
-// the thread instead of hiding it in the hover toolbar.
-//
-// The fetch/poll only runs for near-viewport rows (`inView`); off-screen rows
-// render the static affordance and idle, so a long feed isn't polling per row.
-function ReplyFooter({
-  taskId,
-  inView,
-  onOpenThread,
-}: {
-  taskId: string;
-  inView: boolean;
-  onOpenThread: () => void;
-}) {
-  const { messages } = useTaskThread(taskId, {
-    pollIntervalMs: FEED_REPLIES_POLL_INTERVAL_MS,
-    enabled: inView,
-    markActivityRead: false,
-  });
-  const authors = useMemo(() => {
-    const seen = new Map<string, (typeof messages)[number]["author"]>();
-    for (const message of messages) {
-      const key = message.author?.uuid ?? "unknown";
-      if (!seen.has(key)) seen.set(key, message.author);
-    }
-    return [...seen.values()].slice(0, 4);
-  }, [messages]);
-
-  if (messages.length === 0) {
-    // A single avatar-sized slot keeps this row the exact height of the
-    // populated teaser, so swapping to it after the fetch never shifts the feed.
-    return (
-      <ThreadItemReplies onClick={onOpenThread} className="mt-1">
-        <AvatarGroup size="xs">
-          <Avatar size="xs">
-            <AvatarFallback>
-              <ChatCircleIcon size={12} />
-            </AvatarFallback>
-          </Avatar>
-        </AvatarGroup>
-        <ThreadItemRepliesLabel>Reply</ThreadItemRepliesLabel>
-      </ThreadItemReplies>
-    );
-  }
-
-  const last = messages[messages.length - 1];
-  return (
-    <ThreadItemReplies onClick={onOpenThread} className="mt-1">
-      <AvatarGroup size="xs">
-        {authors.map((author, index) => (
-          <UserAvatar key={author?.uuid ?? index} user={author} size="xs" />
-        ))}
-      </AvatarGroup>
-      <ThreadItemRepliesLabel>
-        {messages.length} {messages.length === 1 ? "reply" : "replies"}
-      </ThreadItemRepliesLabel>
-      <ThreadItemRepliesMeta>
-        Last reply {formatRelativeTimeShort(last.created_at)}
-      </ThreadItemRepliesMeta>
-    </ThreadItemReplies>
-  );
-}
-
 function channelTaskStarter(task: Task): UserBasic | null {
   return task.origin_product === "user_created"
     ? (task.created_by ?? null)
     : null;
 }
 
-function ExpandablePrompt({
+export function ExpandablePrompt({
   children,
   lines,
 }: {
@@ -473,75 +409,109 @@ function ExpandablePrompt({
   );
 }
 
-export function TaskFeedRow({
-  task,
-  actions,
+const CHIP_CLASS =
+  "inline-flex h-6 items-center gap-1 rounded-md border border-(--gray-6) bg-(--gray-4) px-2 text-(--gray-11) text-xs hover:border-(--gray-7) hover:bg-(--gray-5)";
+
+function PrChip({ url }: { url: string }) {
+  const { safeUrl, prNumber, stateLabel, Icon, iconColor } = usePrArtifact(url);
+  if (!safeUrl) return null;
+  return (
+    <button
+      type="button"
+      className={CHIP_CLASS}
+      title={stateLabel ?? "Pull request"}
+      onClick={(event) => {
+        event.stopPropagation();
+        openExternalUrl(safeUrl);
+      }}
+    >
+      <span
+        className="size-1.5 rounded-full"
+        style={{ backgroundColor: iconColor }}
+      />
+      <Icon size={12} />
+      {prNumber ? `#${prNumber}` : "PR"}
+    </button>
+  );
+}
+
+function OverflowChip({
+  label,
   children,
 }: {
-  task: Task;
-  actions?: ReactNode;
-  children?: ReactNode;
+  label: string;
+  children: ReactNode;
 }) {
-  const starter = channelTaskStarter(task);
-  const prompt = useMemo(
-    () => xmlToPlainText(task.description ?? "").trim(),
-    [task.description],
-  );
-
   return (
-    <ThreadItem className="rounded-none py-1 pr-8 hover:bg-fill-hover/50">
-      <ThreadItemGutter>
-        {starter ? (
-          <UserAvatar user={starter} />
-        ) : (
-          <Avatar>
-            <AvatarFallback>
-              <RobotIcon size={16} />
-            </AvatarFallback>
-          </Avatar>
-        )}
-      </ThreadItemGutter>
-
-      <ThreadItemContent className="min-w-0">
-        <ThreadItemHeader>
-          <ThreadItemAuthor>
-            {starter ? userDisplayName(starter) : "PostHog"}
-          </ThreadItemAuthor>
-          {!starter && <Badge variant="info">Agent</Badge>}
-          <ThreadItemTimestamp
-            dateTime={new Date(task.created_at).toISOString()}
-          >
-            {formatRelativeTimeShort(task.created_at)}
-          </ThreadItemTimestamp>
-        </ThreadItemHeader>
-
-        <ExpandablePrompt lines={2}>
-          {prompt ||
-            (starter ? "started a new task" : "A new task was started")}
-        </ExpandablePrompt>
-
-        {children}
-      </ThreadItemContent>
-
-      {actions}
-    </ThreadItem>
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            className={cn(CHIP_CLASS, "border-dashed text-(--gray-9)")}
+            onClick={(event) => event.stopPropagation()}
+          />
+        }
+      >
+        {label}
+      </PopoverTrigger>
+      <PopoverContent
+        className="min-w-60 p-1"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex flex-col gap-1">{children}</div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
 const FeedItem = memo(function FeedItem({
   task,
-  channelId,
   inView,
   onOpenTask,
   onOpenThread,
 }: {
   task: Task;
-  channelId: string;
   inView: boolean;
   onOpenTask: (task: Task) => void;
   onOpenThread: (task: Task) => void;
 }) {
   const { mutate: markTasksRead } = useMarkTaskActivityRead();
+  const statusDisplay = useTaskStatusDisplay(task);
+  const taskData = useChannelTaskData(task);
+  const starter = channelTaskStarter(task);
+  const prompt = useMemo(
+    () => xmlToPlainText(task.description ?? "").trim(),
+    [task.description],
+  );
+  const prUrls = useMemo(
+    () =>
+      mergePrUrls(
+        readPrUrls(task.latest_run?.output),
+        taskData?.cloudPrUrl ? [taskData.cloudPrUrl] : [],
+      ),
+    [task.latest_run?.output, taskData?.cloudPrUrl],
+  );
+  const artifacts = useMemo(
+    () =>
+      buildRows(task, [], []).filter(
+        (row) => row.kind === "canvas" || row.kind === "file",
+      ),
+    [task],
+  );
+  const { messages } = useTaskThread(task.id, {
+    pollIntervalMs: FEED_REPLIES_POLL_INTERVAL_MS,
+    enabled: inView,
+    markActivityRead: false,
+  });
+  const authors = useMemo(() => {
+    const seen = new Map<string, (typeof messages)[number]["author"]>();
+    for (const message of messages) {
+      const key = message.author?.uuid ?? "unknown";
+      if (!seen.has(key)) seen.set(key, message.author);
+    }
+    return [...seen.values()].slice(0, 4);
+  }, [messages]);
   const markRead = useCallback(() => {
     markTasksRead([
       { task_id: task.id, seen_before: new Date().toISOString() },
@@ -552,37 +522,128 @@ const FeedItem = memo(function FeedItem({
     onOpenTask(task);
   }, [markRead, onOpenTask, task]);
 
+  const visiblePrCount = prUrls.length >= 5 ? 1 : 2;
   return (
-    <TaskFeedRow
-      task={task}
-      actions={
-        // Replying now lives in the always-visible ReplyFooter, so the hover
-        // toolbar only carries per-row actions (copy link, open task). Actions
-        // anchor to the row's top-right corner; a top tooltip there overhangs
-        // the panel edge and gets clipped by the scroll container, so open
-        // tooltips toward the content instead.
-        <ThreadItemActions aria-label="Message actions" className="inset-bs-2">
-          <ThreadItemAction
-            label="Copy link to task"
-            onClick={() =>
-              void copyChannelLink(channelId, "thread_panel", task.id)
-            }
-          >
-            <LinkIcon size={15} />
-          </ThreadItemAction>
-          <ThreadItemAction label="Open task" onClick={openTask}>
-            <ArrowSquareOutIcon size={15} />
-          </ThreadItemAction>
-        </ThreadItemActions>
-      }
+    <Card
+      size="sm"
+      role="button"
+      tabIndex={0}
+      className="mx-auto my-1.5 w-full max-w-[660px] cursor-pointer rounded-xl py-0 transition-colors hover:border-(--gray-7) hover:bg-(--gray-3)"
+      onClick={() => {
+        markRead();
+        onOpenThread(task);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          markRead();
+          onOpenThread(task);
+        }
+      }}
     >
-      <TaskCard task={task} channelId={channelId} onOpen={markRead} />
-      <ReplyFooter
-        taskId={task.id}
-        inView={inView}
-        onOpenThread={() => onOpenThread(task)}
-      />
-    </TaskFeedRow>
+      <CardContent className="flex flex-col gap-2.5 p-3.5">
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            className="min-w-0 flex-1 text-left font-semibold text-sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              openTask();
+            }}
+          >
+            {task.title || "Untitled task"}
+          </button>
+          <TaskStatusBadge display={statusDisplay} />
+        </div>
+        <div className="text-(--gray-9) text-xs">
+          <span className="font-medium text-(--gray-11)">
+            {starter ? userDisplayName(starter) : "PostHog"}:
+          </span>{" "}
+          <ExpandablePrompt lines={2}>
+            {prompt ||
+              (starter ? "started a new task" : "A new task was started")}
+          </ExpandablePrompt>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {task.repository && (
+            <span
+              className={cn(CHIP_CLASS, "border-transparent bg-transparent")}
+            >
+              <GitBranchIcon size={12} />
+              {task.repository}
+            </span>
+          )}
+          {prUrls.slice(0, visiblePrCount).map((url) => (
+            <PrChip key={url} url={url} />
+          ))}
+          {prUrls.length > visiblePrCount && (
+            <OverflowChip label={`+${prUrls.length - visiblePrCount} PRs`}>
+              {prUrls.slice(visiblePrCount).map((url) => (
+                <PrChip key={url} url={url} />
+              ))}
+            </OverflowChip>
+          )}
+          {artifacts.slice(0, 2).map((artifact) => (
+            <button
+              key={artifact.key}
+              type="button"
+              className={CHIP_CLASS}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenThread(task);
+              }}
+            >
+              <FileIcon size={12} />
+              {artifact.name}
+            </button>
+          ))}
+          {artifacts.length > 2 && (
+            <OverflowChip label={`+${artifacts.length - 2} files`}>
+              {artifacts.slice(2).map((artifact) => (
+                <button
+                  key={artifact.key}
+                  type="button"
+                  className={cn(CHIP_CLASS, "w-full")}
+                >
+                  <FileIcon size={12} />
+                  {artifact.name}
+                </button>
+              ))}
+            </OverflowChip>
+          )}
+          <button
+            type="button"
+            className={cn(
+              CHIP_CLASS,
+              messages.length === 0 &&
+                "border-transparent bg-transparent text-(--gray-9)",
+            )}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenThread(task);
+            }}
+          >
+            <ChatCircleIcon size={12} />
+            {messages.length || "Comment"}
+          </button>
+          <span className="flex-1" />
+          {authors.length > 0 && (
+            <AvatarGroup size="xs">
+              {authors.map((author, index) => (
+                <UserAvatar
+                  key={author?.uuid ?? index}
+                  user={author}
+                  size="xs"
+                />
+              ))}
+            </AvatarGroup>
+          )}
+          <span className="text-(--gray-9) text-xs">
+            {formatRelativeTimeShort(task.updated_at)}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   );
 });
 
@@ -591,12 +652,10 @@ const FeedItem = memo(function FeedItem({
 // near the viewport, letting `FeedItem` shed off-screen polling.
 function FeedRow({
   task,
-  channelId,
   onOpenTask,
   onOpenThread,
 }: {
   task: Task;
-  channelId: string;
   onOpenTask: (task: Task) => void;
   onOpenThread: (task: Task) => void;
 }) {
@@ -614,7 +673,6 @@ function FeedRow({
     >
       <FeedItem
         task={task}
-        channelId={channelId}
         inView={inView}
         onOpenTask={onOpenTask}
         onOpenThread={onOpenThread}
@@ -833,7 +891,6 @@ export function ChannelFeedView({
                 <FeedRow
                   key={entry.id}
                   task={entry.task}
-                  channelId={channelId}
                   onOpenTask={onOpenTask}
                   onOpenThread={onOpenThread}
                 />

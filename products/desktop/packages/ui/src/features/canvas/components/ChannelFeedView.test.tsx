@@ -33,7 +33,7 @@ vi.mock("@posthog/ui/features/browser-tabs/TaskTabIcon", () => ({
   TaskTabIcon: () => <span />,
 }));
 
-import { TaskCard, TaskFeedRow } from "./ChannelFeedView";
+import { ExpandablePrompt, TaskCard } from "./ChannelFeedView";
 
 const task = {
   id: "task-1",
@@ -79,7 +79,7 @@ function mockLayout(charsPerLine: number) {
   );
 }
 
-describe("TaskFeedRow", () => {
+describe("ChannelFeedView", () => {
   it("reports when its task is opened", async () => {
     const user = userEvent.setup();
     const onOpen = vi.fn();
@@ -99,7 +99,7 @@ describe("TaskFeedRow", () => {
     const user = userEvent.setup();
     const { container } = render(
       <Theme>
-        <TaskFeedRow task={task} />
+        <ExpandablePrompt lines={2}>{task.description}</ExpandablePrompt>
       </Theme>,
     );
 
@@ -127,7 +127,7 @@ describe("TaskFeedRow", () => {
     mockLayout(1000);
     render(
       <Theme>
-        <TaskFeedRow task={task} />
+        <ExpandablePrompt lines={2}>{task.description}</ExpandablePrompt>
       </Theme>,
     );
 
