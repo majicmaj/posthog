@@ -1035,7 +1035,7 @@ function PendingFeedRow({ pending }: { pending: PendingKickoff }) {
 // as a task row, minus the task card and reply footer.
 function SystemFeedRow({ message }: { message: ChannelFeedSystemMessage }) {
   return (
-    <div className="mx-auto flex w-full max-w-[660px] min-w-0 items-center gap-2 px-1 py-1.5 text-(--gray-9) text-xs">
+    <div className="mx-auto flex w-full min-w-0 max-w-[660px] items-center gap-2 px-1 py-1.5 text-(--gray-9) text-xs">
       {message.author ? (
         <UserAvatar user={message.author} size="xs" />
       ) : (
