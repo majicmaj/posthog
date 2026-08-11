@@ -672,6 +672,9 @@ const FeedItem = memo(function FeedItem({
           >
             {task.title || "Untitled task"}
           </button>
+          <span className="shrink-0 text-(--gray-9) text-xs leading-snug">
+            {formatRelativeTimeShort(task.updated_at)}
+          </span>
           <TaskStatusBadge display={statusDisplay} />
         </div>
         <div className="mt-1.5 text-(--gray-9) text-xs leading-normal">
@@ -780,9 +783,6 @@ const FeedItem = memo(function FeedItem({
               ))}
             </AvatarGroup>
           )}
-          <span className="text-(--gray-9) text-xs">
-            {formatRelativeTimeShort(task.updated_at)}
-          </span>
         </div>
       </CardContent>
     </Card>
