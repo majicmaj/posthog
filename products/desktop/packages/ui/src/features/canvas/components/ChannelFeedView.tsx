@@ -53,6 +53,7 @@ import type { ThreadPanelTab } from "@posthog/ui/features/canvas/stores/threadPa
 import { taskCardNavigation } from "@posthog/ui/features/canvas/taskCardNavigation";
 import { canvasArtifactOpenHandler } from "@posthog/ui/features/canvas/utils/canvasArtifactNavigation";
 import { userDisplayName } from "@posthog/ui/features/canvas/utils/userDisplay";
+import { MarkdownRenderer } from "@posthog/ui/features/editor/components/MarkdownRenderer";
 import { usePrArtifact } from "@posthog/ui/features/git-interaction/usePrArtifact";
 import { usePanelLayoutStore } from "@posthog/ui/features/panels/panelLayoutStore";
 import {
@@ -79,6 +80,20 @@ import {
 // Feed rows poll their reply counts slower than the open thread panel — the
 // shared query key means an open panel naturally speeds the row up too.
 const FEED_REPLIES_POLL_INTERVAL_MS = 15_000;
+
+// Injected context wrappers a prompt may carry (Slack thread history, a
+// channel's CONTEXT.md, canvas instructions, saved personalization). The feed
+// shows what the user actually asked, so these are stripped — the timeline
+// renders them as their own collapsible surfaces.
+const CONTEXT_BLOCK_REGEX =
+  /<(slack_thread_context|channel_context|canvas_generation_instructions|user_custom_instructions)\b[^>]*>[\s\S]*?<\/\1>/g;
+
+export function stripContextBlocks(text: string): string {
+  return text
+    .replace(CONTEXT_BLOCK_REGEX, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 // Once a PR exists its GitHub state is the truest top-line status — more
 // accurate than the run status, which routinely lingers on "in_progress"
@@ -307,9 +322,14 @@ function channelTaskStarter(task: Task): UserBasic | null {
 export function ExpandablePrompt({
   children,
   lines,
+  expandedContent,
 }: {
   children: string;
   lines: 2 | 4;
+  /** Rendered in place of the raw text when expanded — lets the collapsed
+   * clamp stay plain text (the cut is measured on text) while the expanded
+   * view renders rich markdown. */
+  expandedContent?: ReactNode;
 }) {
   // The prompt is truncated by hand — not with -webkit-line-clamp — so the
   // "more" toggle can sit inline right after the ellipsis on the last visible
@@ -382,6 +402,25 @@ export function ExpandablePrompt({
 
   const clampClass = lines === 2 ? "max-h-[2lh]" : "max-h-[4lh]";
 
+  if (expanded && expandedContent !== undefined) {
+    return (
+      <div data-slot="expandable-prompt" className="min-w-0">
+        {expandedContent}
+        <button
+          type="button"
+          aria-expanded
+          className="text-muted-foreground text-xs underline underline-offset-2 hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpanded(false);
+          }}
+        >
+          less
+        </button>
+      </div>
+    );
+  }
+
   return (
     // A plain div, deliberately not ThreadItemBody: quill's thread body pins
     // font-size to text-sm and color to --foreground, which would flatten the
@@ -407,7 +446,10 @@ export function ExpandablePrompt({
             type="button"
             aria-expanded={expanded}
             className="pl-1 text-muted-foreground text-xs underline underline-offset-2 hover:text-foreground"
-            onClick={() => setExpanded((value) => !value)}
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded((value) => !value);
+            }}
           >
             {expanded ? "less" : "more"}
           </button>
@@ -491,7 +533,7 @@ const FeedItem = memo(function FeedItem({
   const taskData = useChannelTaskData(task);
   const starter = channelTaskStarter(task);
   const prompt = useMemo(
-    () => xmlToPlainText(task.description ?? "").trim(),
+    () => stripContextBlocks(xmlToPlainText(task.description ?? "")),
     [task.description],
   );
   const prUrls = useMemo(
@@ -608,7 +650,14 @@ const FeedItem = memo(function FeedItem({
           <TaskStatusBadge display={statusDisplay} />
         </div>
         <div className="mt-1.5 text-(--gray-9) text-xs leading-normal">
-          <ExpandablePrompt lines={2}>
+          <ExpandablePrompt
+            lines={2}
+            expandedContent={
+              <div className="[&_pre]:my-1.5 whitespace-normal text-(--gray-11)">
+                <MarkdownRenderer content={prompt} />
+              </div>
+            }
+          >
             {prompt || "A new task was started"}
           </ExpandablePrompt>
         </div>

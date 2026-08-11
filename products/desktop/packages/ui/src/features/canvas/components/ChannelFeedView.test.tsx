@@ -36,6 +36,7 @@ vi.mock("@posthog/ui/features/browser-tabs/TaskTabIcon", () => ({
 import {
   ExpandablePrompt,
   mergeFeedEntries,
+  stripContextBlocks,
   TaskCard,
 } from "./ChannelFeedView";
 
@@ -136,6 +137,15 @@ describe("ChannelFeedView", () => {
     );
 
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  // Guards against injected context wrappers (Slack thread history, channel
+  // CONTEXT.md) leaking verbatim into the card's prompt snippet.
+  it("strips injected context blocks from prompts", () => {
+    const description =
+      '<slack_thread_context>\nThread started by someone.\n</slack_thread_context>\n\nfix the flaky test in <channel_context channel="web">context body</channel_context> ci';
+
+    expect(stripContextBlocks(description)).toBe("fix the flaky test in  ci");
   });
 
   // Guards the feed's direction (newest first, not chat-style oldest first)
