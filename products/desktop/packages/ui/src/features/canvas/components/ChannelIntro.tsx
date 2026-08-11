@@ -7,11 +7,12 @@ import {
   ItemTitle,
   Spinner,
 } from "@posthog/quill";
-import { getLocalDayDiff } from "@posthog/shared";
+import { EXTERNAL_LINKS, getLocalDayDiff } from "@posthog/shared";
 import type { TaskChannel } from "@posthog/shared/domain-types";
 import { mentionChipClass } from "@posthog/ui/features/canvas/components/MentionText";
 import { useChannelsLayout } from "@posthog/ui/features/canvas/hooks/useChannelsLayout";
 import { userDisplayName } from "@posthog/ui/features/canvas/utils/userDisplay";
+import { openExternalUrl } from "@posthog/ui/shell/openExternal";
 import { Heading, Text } from "@radix-ui/themes";
 import { FileCheckCorner, FilePlusCorner, Info, X } from "lucide-react";
 
@@ -137,7 +138,12 @@ export function ChannelIntro({
         <Item
           className="w-full border-primary/50 hover:bg-fill-hover"
           variant="pressable"
-          render={<button type="button" onClick={() => {}} />}
+          render={
+            <button
+              type="button"
+              onClick={() => openExternalUrl(EXTERNAL_LINKS.docs)}
+            />
+          }
         >
           <ItemMedia variant="icon">
             <Info size={18} />
