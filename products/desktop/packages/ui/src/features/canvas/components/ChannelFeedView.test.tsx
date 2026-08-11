@@ -108,7 +108,7 @@ describe("ChannelFeedView", () => {
     );
 
     const prompt = container.querySelector(
-      "[data-slot=thread-item-body]",
+      "[data-slot=expandable-prompt]",
     ) as HTMLElement;
     // The visible text is the non-measure child (the measure copy is aria-hidden).
     const visible = Array.from(prompt.children).find(

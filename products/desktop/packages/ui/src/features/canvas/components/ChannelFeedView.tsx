@@ -388,7 +388,13 @@ export function ExpandablePrompt({
   const clampClass = lines === 2 ? "max-h-[2lh]" : "max-h-[4lh]";
 
   return (
-    <ThreadItemBody className="wrap-break-word relative overflow-hidden whitespace-pre-line">
+    // A plain div, deliberately not ThreadItemBody: quill's thread body pins
+    // font-size to text-sm and color to --foreground, which would flatten the
+    // card's title/prompt hierarchy. Typography comes from the caller.
+    <div
+      data-slot="expandable-prompt"
+      className="wrap-break-word relative min-w-0 overflow-hidden whitespace-pre-line"
+    >
       <div
         aria-hidden
         className="pointer-events-none invisible absolute top-0 right-0 left-0"
@@ -414,7 +420,7 @@ export function ExpandablePrompt({
           </button>
         )}
       </div>
-    </ThreadItemBody>
+    </div>
   );
 }
 
