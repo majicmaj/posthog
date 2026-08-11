@@ -33,7 +33,11 @@ vi.mock("@posthog/ui/features/browser-tabs/TaskTabIcon", () => ({
   TaskTabIcon: () => <span />,
 }));
 
-import { ExpandablePrompt, TaskCard } from "./ChannelFeedView";
+import {
+  ExpandablePrompt,
+  mergeFeedEntries,
+  TaskCard,
+} from "./ChannelFeedView";
 
 const task = {
   id: "task-1",
@@ -132,5 +136,29 @@ describe("ChannelFeedView", () => {
     );
 
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  // Guards the feed's direction (newest first, not chat-style oldest first)
+  // and the tie-break that keeps a same-timestamp announcement directly under
+  // the task card it describes.
+  it("merges entries newest-first with announcements under their card", () => {
+    const older = {
+      ...task,
+      id: "task-old",
+      created_at: "2026-07-16T12:00:00.000Z",
+    };
+    const announcement = {
+      id: "system-1",
+      createdAt: task.created_at,
+      text: "Building CONTEXT.md",
+    };
+
+    const entries = mergeFeedEntries([older, task], [announcement]);
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "task-1",
+      "system-1",
+      "task-old",
+    ]);
   });
 });

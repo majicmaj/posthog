@@ -18,12 +18,6 @@ import {
   Badge,
   Card,
   CardContent,
-  ChatMessageScroller,
-  ChatMessageScrollerButton,
-  ChatMessageScrollerContent,
-  ChatMessageScrollerItem,
-  ChatMessageScrollerProvider,
-  ChatMessageScrollerViewport,
   cn,
   Popover,
   PopoverContent,
@@ -36,7 +30,6 @@ import {
   ThreadItemGutter,
   ThreadItemHeader,
   ThreadItemTimestamp,
-  useChatMessageScroller,
 } from "@posthog/quill";
 import {
   formatRelativeTimeShort,
@@ -309,9 +302,13 @@ function channelTaskStarter(task: Task): UserBasic | null {
 export function ExpandablePrompt({
   children,
   lines,
+  prefix,
 }: {
   children: string;
   lines: 2 | 4;
+  /** Rendered inline before the prompt (e.g. the author's name) and included
+   * in the truncation measurement, so "Author: prompt…" clamps as one flow. */
+  prefix?: ReactNode;
 }) {
   // The prompt is truncated by hand — not with -webkit-line-clamp — so the
   // "more" toggle can sit inline right after the ellipsis on the last visible
@@ -342,8 +339,13 @@ export function ExpandablePrompt({
         // and reading scrollHeight (no per-line geometry), then restore it so the
         // next resize re-measures against the uncut prompt. `children` is the
         // source of truth (and a dep below) so a polled prompt update re-measures
-        // even when its rendered size is unchanged.
-        const text = measure.firstChild as Text;
+        // even when its rendered size is unchanged. The prompt is the measure's
+        // last node — an inline `prefix` may render before it.
+        const text = measure.lastChild;
+        if (text?.nodeType !== Node.TEXT_NODE) {
+          setCut(null);
+          return;
+        }
         const fits = (end: number) => {
           text.nodeValue = `${children.slice(0, end).trimEnd()}…more`;
           return measure.scrollHeight <= maxHeight + 0.5;
@@ -387,12 +389,14 @@ export function ExpandablePrompt({
         className="pointer-events-none invisible absolute top-0 right-0 left-0"
       >
         <div ref={measureRef} className="wrap-break-word whitespace-pre-line">
+          {prefix}
           {children}
         </div>
       </div>
       <div
         className={cn(!expanded && clampClass, !expanded && "overflow-hidden")}
       >
+        {prefix}
         {displayText}
         {truncated && (
           <button
@@ -468,11 +472,13 @@ function OverflowChip({
 const FeedItem = memo(function FeedItem({
   task,
   inView,
+  showRepo,
   onOpenTask,
   onOpenThread,
 }: {
   task: Task;
   inView: boolean;
+  showRepo: boolean;
   onOpenTask: (task: Task) => void;
   onOpenThread: (task: Task) => void;
 }) {
@@ -556,16 +562,20 @@ const FeedItem = memo(function FeedItem({
           <TaskStatusBadge display={statusDisplay} />
         </div>
         <div className="text-(--gray-9) text-xs">
-          <span className="font-medium text-(--gray-11)">
-            {starter ? userDisplayName(starter) : "PostHog"}:
-          </span>{" "}
-          <ExpandablePrompt lines={2}>
+          <ExpandablePrompt
+            lines={2}
+            prefix={
+              <span className="font-medium text-(--gray-11)">
+                {starter ? userDisplayName(starter) : "PostHog"}:{" "}
+              </span>
+            }
+          >
             {prompt ||
               (starter ? "started a new task" : "A new task was started")}
           </ExpandablePrompt>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {task.repository && (
+          {showRepo && task.repository && (
             <span
               className={cn(CHIP_CLASS, "border-transparent bg-transparent")}
             >
@@ -647,84 +657,67 @@ const FeedItem = memo(function FeedItem({
   );
 });
 
-// One feed row: owns the scroller item (the `content-visibility` boundary, so
-// its box is always laid out and safe to observe) and reports whether it is
-// near the viewport, letting `FeedItem` shed off-screen polling.
+// One feed row: owns the `content-visibility` boundary (so its box is always
+// laid out and safe to observe) and reports whether it is near the viewport,
+// letting `FeedItem` shed off-screen polling. The intrinsic-size estimate
+// keeps the scrollbar stable while off-screen rows are skipped; `auto` still
+// remembers each row's real height after first paint.
 function FeedRow({
   task,
+  showRepo,
   onOpenTask,
   onOpenThread,
 }: {
   task: Task;
+  showRepo: boolean;
   onOpenTask: (task: Task) => void;
   onOpenThread: (task: Task) => void;
 }) {
   const [ref, inView] = useInView<HTMLDivElement>({ rootMargin: "1200px 0px" });
   return (
-    <ChatMessageScrollerItem
+    <div
       ref={ref}
-      messageId={task.id}
-      // Rows already get `content-visibility:auto` from quill, but its default
-      // `contain-intrinsic-size` (10rem) under-reserves a feed row (message +
-      // task card + replies ≈ 13rem), so off-screen rows collapse too small and
-      // the scrollbar jumps as they paint in. A closer estimate keeps scrolling
-      // stable; `auto` still remembers each row's real height after first paint.
-      className="[contain-intrinsic-size:auto_13rem]"
+      className="[contain-intrinsic-size:auto_9rem] [content-visibility:auto]"
     >
       <FeedItem
         task={task}
         inView={inView}
+        showRepo={showRepo}
         onOpenTask={onOpenTask}
         onOpenThread={onOpenThread}
       />
-    </ChatMessageScrollerItem>
+    </div>
   );
 }
 
-// The optimistic kickoff row: the user's message plus a "Starting…" card,
-// shown the moment they submit. Deliberately dumb — no per-task data hooks or
-// polls (there's no task id to query yet); it's replaced by a real FeedRow as
-// soon as the task is created.
-function PendingFeedRow({
-  pending,
-  createdAt,
-}: {
-  pending: PendingKickoff;
-  createdAt: string;
-}) {
+// The optimistic kickoff row: the user's prompt as a "Starting…" card, shown
+// at the top of the feed the moment they submit. Deliberately dumb — no
+// per-task data hooks or polls (there's no task id to query yet); it's
+// replaced by a real FeedRow as soon as the task is created.
+function PendingFeedRow({ pending }: { pending: PendingKickoff }) {
   return (
-    <ChatMessageScrollerItem
-      messageId={pending.id}
-      className="[contain-intrinsic-size:auto_13rem]"
+    <Card
+      size="sm"
+      className="mx-auto my-1.5 w-full max-w-[660px] rounded-xl py-0"
     >
-      <ThreadItem className="rounded-none py-4 pr-8">
-        <ThreadItemGutter>
-          <Avatar>
-            <AvatarFallback>
-              <Spinner className="size-4" />
-            </AvatarFallback>
-          </Avatar>
-        </ThreadItemGutter>
-        <ThreadItemContent className="min-w-0">
-          <ThreadItemHeader>
-            <ThreadItemAuthor>You</ThreadItemAuthor>
-            <ThreadItemTimestamp dateTime={createdAt}>now</ThreadItemTimestamp>
-          </ThreadItemHeader>
-          <ExpandablePrompt lines={4}>{pending.prompt}</ExpandablePrompt>
-          <Card
-            size="sm"
-            className="mt-1.5 w-full max-w-[820px] rounded-sm py-0"
+      <CardContent className="flex flex-col gap-2.5 p-3.5">
+        <div className="flex items-start gap-3">
+          <span className="min-w-0 flex-1 font-semibold text-sm">New task</span>
+          <Badge variant="info">
+            <Spinner className="size-2.5" />
+            Starting…
+          </Badge>
+        </div>
+        <div className="text-(--gray-9) text-xs">
+          <ExpandablePrompt
+            lines={2}
+            prefix={<span className="font-medium text-(--gray-11)">You: </span>}
           >
-            <CardContent className="py-2.5">
-              <Badge variant="info">
-                <Spinner className="size-2.5" />
-                Starting…
-              </Badge>
-            </CardContent>
-          </Card>
-        </ThreadItemContent>
-      </ThreadItem>
-    </ChatMessageScrollerItem>
+            {pending.prompt}
+          </ExpandablePrompt>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -734,7 +727,7 @@ function PendingFeedRow({
 // as a task row, minus the task card and reply footer.
 function SystemFeedRow({ message }: { message: ChannelFeedSystemMessage }) {
   return (
-    <ChatMessageScrollerItem messageId={message.id}>
+    <div className="mx-auto w-full max-w-[660px]">
       <ThreadItem className="rounded-none py-1 pr-8">
         <ThreadItemGutter>
           {message.author ? (
@@ -762,29 +755,13 @@ function SystemFeedRow({ message }: { message: ChannelFeedSystemMessage }) {
           </ThreadItemBody>
         </ThreadItemContent>
       </ThreadItem>
-    </ChatMessageScrollerItem>
+    </div>
   );
-}
-
-// Follow the feed to the bottom when *this* user posts, but not when a
-// teammate's card arrives via polling — a new `pending` kickoff is only ever
-// added by the local composer, so it's the right signal. Must live inside the
-// scroller provider to reach `scrollToEnd`. Renders nothing.
-function FollowOwnPost({ latestPendingId }: { latestPendingId?: string }) {
-  const { scrollToEnd } = useChatMessageScroller();
-  const prevRef = useRef(latestPendingId);
-  useEffect(() => {
-    if (latestPendingId && latestPendingId !== prevRef.current) {
-      scrollToEnd();
-    }
-    prevRef.current = latestPendingId;
-  }, [latestPendingId, scrollToEnd]);
-  return null;
 }
 
 // A single feed entry, either a real task card or a synthetic system row, tagged
 // with the timestamp used to interleave the two.
-type FeedEntry =
+export type FeedEntry =
   | { kind: "task"; id: string; createdAt: string; task: Task }
   | {
       kind: "system";
@@ -793,10 +770,70 @@ type FeedEntry =
       message: ChannelFeedSystemMessage;
     };
 
-// The Slack-style channel feed: every task kicked off in the channel, oldest
-// first, rendered as a kickoff message + task card. Multiplayer — the list is
-// team-visible and polls for teammates' cards and status flips. Synthetic
-// "PostHog agent" system rows (context lifecycle) are interleaved by timestamp.
+// Merge tasks + system rows into one newest-first list. ISO timestamps sort
+// lexically, so a plain string compare is chronological. Announcements are
+// posted 1ms before the task they describe; if the backend truncates that
+// sub-second offset the timestamps tie, so break ties task-first to keep the
+// announcement directly under its card.
+export function mergeFeedEntries(
+  tasks: Task[],
+  systemMessages: ChannelFeedSystemMessage[],
+): FeedEntry[] {
+  const merged: FeedEntry[] = [
+    ...tasks.map((task) => ({
+      kind: "task" as const,
+      id: task.id,
+      createdAt: task.created_at,
+      task,
+    })),
+    ...systemMessages.map((message) => ({
+      kind: "system" as const,
+      id: message.id,
+      createdAt: message.createdAt,
+      message,
+    })),
+  ];
+  merged.sort(
+    (a, b) =>
+      b.createdAt.localeCompare(a.createdAt) ||
+      (a.kind === b.kind ? 0 : a.kind === "task" ? -1 : 1),
+  );
+  return merged;
+}
+
+const DAY_MS = 86_400_000;
+
+// "Today" / "Yesterday" / "Aug 8" (with the year once it differs) for the
+// feed's day separators.
+function feedDayLabel(iso: string, now: Date): string {
+  const date = new Date(iso);
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+  });
+}
+
+function DaySeparator({ label }: { label: string }) {
+  return (
+    <div className="mx-auto flex w-full max-w-[660px] items-center gap-3 pt-5 pb-2 font-semibold text-(--gray-9) text-[11px] uppercase tracking-wider">
+      <span className="h-px flex-1 bg-(--gray-5)" />
+      {label}
+      <span className="h-px flex-1 bg-(--gray-5)" />
+    </div>
+  );
+}
+
+// The channel feed: every task kicked off in the channel, newest first in a
+// plain top-down scroll (Twitter-style, not a bottom-anchored chat).
+// Multiplayer — the list is team-visible and polls for teammates' cards and
+// status flips. Synthetic "PostHog agent" system rows (context lifecycle) are
+// interleaved by timestamp, and day separators group the cards.
 export function ChannelFeedView({
   channelId,
   tasks,
@@ -821,44 +858,50 @@ export function ChannelFeedView({
   onOpenTask: (task: Task) => void;
   onOpenThread: (task: Task) => void;
 }) {
-  // Merge tasks + system rows into one chronological list. ISO timestamps sort
-  // lexically, so a plain string compare is chronological. Announcements are
-  // posted 1ms before the task they describe; if the backend truncates that
-  // sub-second offset the timestamps tie, so break ties system-row-first to
-  // keep the announcement above its card.
-  const entries = useMemo<FeedEntry[]>(() => {
-    const merged: FeedEntry[] = [
-      ...tasks.map((task) => ({
-        kind: "task" as const,
-        id: task.id,
-        createdAt: task.created_at,
-        task,
-      })),
-      ...(systemMessages ?? []).map((message) => ({
-        kind: "system" as const,
-        id: message.id,
-        createdAt: message.createdAt,
-        message,
-      })),
-    ];
-    merged.sort(
-      (a, b) =>
-        a.createdAt.localeCompare(b.createdAt) ||
-        (a.kind === b.kind ? 0 : a.kind === "system" ? -1 : 1),
-    );
-    return merged;
-  }, [tasks, systemMessages]);
+  const entries = useMemo<FeedEntry[]>(
+    () => mergeFeedEntries(tasks, systemMessages ?? []),
+    [tasks, systemMessages],
+  );
+
+  // The channel's dominant repo: on a single-repo channel every card would
+  // repeat the same chip, so the repo chip only renders on tasks that target a
+  // different repo than most of the channel.
+  const dominantRepo = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const task of tasks) {
+      if (!task.repository) continue;
+      counts.set(task.repository, (counts.get(task.repository) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    let bestCount = 0;
+    for (const [repo, count] of counts) {
+      if (count > bestCount) {
+        best = repo;
+        bestCount = count;
+      }
+    }
+    return best;
+  }, [tasks]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: channelId is a trigger — switching channels or finishing the initial load swaps/completes the rows without a remount, so re-land at the latest message
+  // biome-ignore lint/correctness/useExhaustiveDependencies: channelId is a trigger — switching channels or finishing the initial load swaps/completes the rows without a remount, so re-land at the latest cards
   useLayoutEffect(() => {
     if (isLoading) return;
-    const viewport = viewportRef.current;
-    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    viewportRef.current?.scrollTo({ top: 0 });
   }, [channelId, isLoading]);
 
-  // Wait for the complete feed: the scroller's initial end-scroll fires once,
-  // so mounting around partial rows would land it short of the latest message.
+  // Follow the feed to the top when *this* user posts (their card lands at the
+  // top), but not when a teammate's card arrives via polling — a new `pending`
+  // kickoff is only ever added by the local composer, so it's the right signal.
+  const latestPendingId = pending[pending.length - 1]?.id;
+  const prevPendingRef = useRef(latestPendingId);
+  useEffect(() => {
+    if (latestPendingId && latestPendingId !== prevPendingRef.current) {
+      viewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    prevPendingRef.current = latestPendingId;
+  }, [latestPendingId]);
+
   if (isLoading && pending.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -872,43 +915,48 @@ export function ChannelFeedView({
   }
 
   const now = new Date();
-  const latestPendingId = pending[pending.length - 1]?.id;
+  const rows: ReactNode[] = [];
+  // Pending kickoffs land at the top, newest first, under a "Today" separator.
+  let lastDayLabel: string | null = null;
+  if (pending.length > 0) {
+    lastDayLabel = "Today";
+    rows.push(<DaySeparator key="separator-pending" label="Today" />);
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const p = pending[i];
+      rows.push(<PendingFeedRow key={p.id} pending={p} />);
+    }
+  }
+  for (const entry of entries) {
+    const label = feedDayLabel(entry.createdAt, now);
+    if (label !== lastDayLabel) {
+      lastDayLabel = label;
+      rows.push(<DaySeparator key={`separator-${label}`} label={label} />);
+    }
+    rows.push(
+      entry.kind === "task" ? (
+        <FeedRow
+          key={entry.id}
+          task={entry.task}
+          showRepo={
+            !!entry.task.repository && entry.task.repository !== dominantRepo
+          }
+          onOpenTask={onOpenTask}
+          onOpenThread={onOpenThread}
+        />
+      ) : (
+        <SystemFeedRow key={entry.id} message={entry.message} />
+      ),
+    );
+  }
 
   return (
-    <ChatMessageScrollerProvider defaultScrollPosition="end">
-      <FollowOwnPost latestPendingId={latestPendingId} />
-      <ChatMessageScroller className="min-h-0 flex-1">
-        <ChatMessageScrollerViewport ref={viewportRef}>
-          {/* Horizontal padding is load-bearing: ThreadItem's actions float at
-              the row's top-right corner (absolute, past the row edge). Without a
-              gutter they hug the scroll container and get clipped. The deeper
-              bottom padding clears the composer's floating workspace-mode
-              selector, which hangs over the end of the feed. */}
-          <ChatMessageScrollerContent className="mx-auto w-full gap-0 pt-4 pb-10">
-            {intro as never}
-            {entries.map((entry) =>
-              entry.kind === "task" ? (
-                <FeedRow
-                  key={entry.id}
-                  task={entry.task}
-                  onOpenTask={onOpenTask}
-                  onOpenThread={onOpenThread}
-                />
-              ) : (
-                <SystemFeedRow key={entry.id} message={entry.message} />
-              ),
-            )}
-            {pending.map((p) => (
-              <PendingFeedRow
-                key={p.id}
-                pending={p}
-                createdAt={now.toISOString()}
-              />
-            ))}
-          </ChatMessageScrollerContent>
-        </ChatMessageScrollerViewport>
-        <ChatMessageScrollerButton />
-      </ChatMessageScroller>
-    </ChatMessageScrollerProvider>
+    <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto">
+      {/* The deeper top padding clears the composer's floating workspace-mode
+          selector, which hangs below the composer over the start of the feed. */}
+      <div className="mx-auto w-full px-4 pt-10 pb-10">
+        {intro && <div className="mx-auto w-full max-w-[660px]">{intro}</div>}
+        {rows}
+      </div>
+    </div>
   );
 }

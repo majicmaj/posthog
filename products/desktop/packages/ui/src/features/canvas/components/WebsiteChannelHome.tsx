@@ -42,10 +42,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// A channel: a Slack-style multiplayer feed. Each member message kicks off a
-// task rendered as a card everyone in the channel sees; the composer stays
-// pinned at the bottom and threads open in a right-hand panel. The channel's
-// artifacts/history/context views stay in the tabs above (ChannelHeader).
+// A channel: a multiplayer feed. Each member message kicks off a task rendered
+// as a card everyone in the channel sees; the composer stays pinned at the top
+// (Twitter-style — new session first, newest cards under it) and threads open
+// in a right-hand panel. The channel's artifacts/history/context views stay in
+// the tabs above (ChannelHeader).
 export function WebsiteChannelHome({ channelId }: { channelId: string }) {
   const spacesLayout = useChannelsLayout();
   const navigate = useNavigate();
@@ -280,6 +281,23 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
   return (
     <div className="flex h-full min-w-0 bg-gray-1">
       <div className="flex min-w-0 flex-1 flex-col">
+        <div className="w-full px-4 pt-3">
+          {/* Same max width as the feed cards so the composer and the column
+              of cards below it read as one centered feed. */}
+          <div className="mx-auto w-full max-w-[660px]">
+            <ChannelHomeComposer
+              ref={composerRef}
+              channelId={channelId}
+              channelName={channelName}
+              channelContext={channelContext}
+              channelRepositories={channel?.repositories}
+              channelGithubIntegration={channel?.github_integration}
+              onTaskCreated={onTaskCreated}
+              onPendingStart={addPending}
+              onPendingEnd={removePending}
+            />
+          </div>
+        </div>
         <ChannelFeedView
           channelId={channelId}
           tasks={tasks}
@@ -291,19 +309,6 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
           onOpenTask={handleOpenTask}
           onOpenThread={handleOpenThread}
         />
-        <div className="mx-auto w-full px-4 pt-2 pb-2">
-          <ChannelHomeComposer
-            ref={composerRef}
-            channelId={channelId}
-            channelName={channelName}
-            channelContext={channelContext}
-            channelRepositories={channel?.repositories}
-            channelGithubIntegration={channel?.github_integration}
-            onTaskCreated={onTaskCreated}
-            onPendingStart={addPending}
-            onPendingEnd={removePending}
-          />
-        </div>
       </div>
 
       {threadTaskId && threadTaskId !== inheritedThreadTaskId && (
