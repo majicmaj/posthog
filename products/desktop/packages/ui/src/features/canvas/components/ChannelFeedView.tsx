@@ -14,8 +14,6 @@ import {
 import type { PrCheck } from "@posthog/core/git/router-schemas";
 import { xmlToPlainText } from "@posthog/core/message-editor/content";
 import {
-  Avatar,
-  AvatarFallback,
   AvatarGroup,
   Badge,
   Card,
@@ -25,13 +23,6 @@ import {
   PopoverContent,
   PopoverTrigger,
   Spinner,
-  ThreadItem,
-  ThreadItemAuthor,
-  ThreadItemBody,
-  ThreadItemContent,
-  ThreadItemGutter,
-  ThreadItemHeader,
-  ThreadItemTimestamp,
 } from "@posthog/quill";
 import {
   formatRelativeTimeShort,
@@ -1041,34 +1032,27 @@ function PendingFeedRow({ pending }: { pending: PendingKickoff }) {
 // as a task row, minus the task card and reply footer.
 function SystemFeedRow({ message }: { message: ChannelFeedSystemMessage }) {
   return (
-    <div className="mx-auto w-full max-w-[660px]">
-      <ThreadItem className="rounded-none py-1 pr-8">
-        <ThreadItemGutter>
-          {message.author ? (
-            <UserAvatar user={message.author} />
-          ) : (
-            <Avatar>
-              <AvatarFallback>
-                <RobotIcon size={16} />
-              </AvatarFallback>
-            </Avatar>
-          )}
-        </ThreadItemGutter>
-        <ThreadItemContent className="min-w-0">
-          <ThreadItemHeader>
-            <ThreadItemAuthor>
-              {message.author ? userDisplayName(message.author) : "PostHog"}
-            </ThreadItemAuthor>
-            {!message.author && <Badge variant="info">Agent</Badge>}
-            <ThreadItemTimestamp dateTime={message.createdAt}>
-              {formatRelativeTimeShort(message.createdAt)}
-            </ThreadItemTimestamp>
-          </ThreadItemHeader>
-          <ThreadItemBody className="wrap-break-word text-muted-foreground">
+    <div className="mx-auto flex w-full max-w-[660px] min-w-0 items-center gap-2 px-1 py-1.5 text-(--gray-9) text-xs">
+      {message.author ? (
+        <UserAvatar user={message.author} size="xs" />
+      ) : (
+        <RobotIcon size={14} className="shrink-0" />
+      )}
+      <span className="min-w-0 truncate">
+        {message.author ? (
+          <>
+            <span className="font-medium text-(--gray-11)">
+              {userDisplayName(message.author)}
+            </span>{" "}
             {message.text}
-          </ThreadItemBody>
-        </ThreadItemContent>
-      </ThreadItem>
+          </>
+        ) : (
+          message.text
+        )}
+      </span>
+      <span className="shrink-0">
+        · {formatRelativeTimeShort(message.createdAt)}
+      </span>
     </div>
   );
 }

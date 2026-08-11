@@ -23,10 +23,7 @@ import {
   channelFeedQueryKey,
   useChannelFeed,
 } from "@posthog/ui/features/canvas/hooks/useChannelFeed";
-import {
-  channelCreationMessage,
-  useChannelFeedMessages,
-} from "@posthog/ui/features/canvas/hooks/useChannelFeedMessages";
+import { useChannelFeedMessages } from "@posthog/ui/features/canvas/hooks/useChannelFeedMessages";
 import { useChannelsLayout } from "@posthog/ui/features/canvas/hooks/useChannelsLayout";
 import { useChannelTaskMutations } from "@posthog/ui/features/canvas/hooks/useChannelTasks";
 import { useFolderInstructions } from "@posthog/ui/features/canvas/hooks/useFolderInstructions";
@@ -72,16 +69,13 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
   // Marking this channel read lives in ChannelHeader (rendered by every channel
   // surface), so opening Artifacts or CONTEXT.md counts as reading it too.
 
-  // Durable "PostHog agent" rows (CONTEXT.md being built, …).
-  const { messages: feedMessages, isLoading: isLoadingMessages } =
+  // Durable "PostHog agent" rows (CONTEXT.md being built, …). The old chat
+  // feed also injected a synthetic "joined" opener here; the newest-first feed
+  // drops it — the intro header already attributes the channel's creation, and
+  // the opener would dangle at the bottom as the oldest entry.
+  const { messages: systemMessages, isLoading: isLoadingMessages } =
     useChannelFeedMessages(channelId);
   const isLoading = isLoadingChannels || isLoadingFeed || isLoadingMessages;
-  // The Slack-style "joined" opener, derived from the channel row so it renders
-  // (and sorts first) even where the feed endpoint isn't deployed.
-  const systemMessages = useMemo(() => {
-    const creation = channelCreationMessage(channel);
-    return creation ? [creation, ...feedMessages] : feedMessages;
-  }, [channel, feedMessages]);
 
   useSetHeaderContent(
     useMemo(
