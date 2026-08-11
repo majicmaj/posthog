@@ -541,7 +541,6 @@ const FeedItem = memo(function FeedItem({
     markRead();
     onOpenTask(task);
   }, [markRead, onOpenTask, task]);
-  const openArtifactTab = usePanelLayoutStore((state) => state.openArtifactTab);
   // A chip opens its artifact directly: canvases navigate to the canvas, files
   // open as a tab in the task view (the tab is staged in the layout store, then
   // the task view is opened to show it). Anything unopenable falls back to the
@@ -555,7 +554,14 @@ const FeedItem = memo(function FeedItem({
           return;
         }
       } else if (artifact.artifactId && artifact.runId) {
-        openArtifactTab(task.id, {
+        // A task never opened in this session has no panel layout yet, and
+        // openArtifactTab no-ops without one — seed it first so the staged tab
+        // survives into the task view's mount (PanelLayout only initializes
+        // when the layout is missing).
+        const layoutStore = usePanelLayoutStore.getState();
+        if (!layoutStore.getLayout(task.id))
+          layoutStore.initializeTask(task.id);
+        layoutStore.openArtifactTab(task.id, {
           runId: artifact.runId,
           artifactId: artifact.artifactId,
           name: artifact.name,
@@ -565,7 +571,7 @@ const FeedItem = memo(function FeedItem({
       }
       onOpenThread(task, "artifacts");
     },
-    [onOpenThread, openArtifactTab, openTask, task],
+    [onOpenThread, openTask, task],
   );
 
   const visiblePrCount = prUrls.length >= 5 ? 1 : 2;
