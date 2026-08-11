@@ -490,16 +490,20 @@ const CHIP_CLASS =
   "inline-flex h-6 items-center gap-1.5 rounded-md border border-(--gray-6) bg-(--gray-4) px-2 font-medium text-(--gray-11) text-xs transition-colors hover:border-(--gray-7) hover:bg-(--gray-5)";
 
 // A popover that opens on hover (with a short close delay so the pointer can
-// travel into it) and on focus/click for keyboard and touch. Quill has no
-// HoverCard, so this composes one from Popover; content mounts only while
-// open, which keeps per-item data fetches (PR checks, titles) off the feed's
-// steady-state render.
+// travel into it) and on click for keyboard and touch. Quill has no HoverCard,
+// so this composes one from Popover; content mounts only while open, which
+// keeps per-item data fetches (PR checks, titles) off the feed's steady-state
+// render. Deliberately no focus handlers: closing returns focus to the
+// trigger, so opening on focus re-opens the popover in an endless blink loop
+// (and hands it to whichever trigger focus lands on next).
 function HoverPopover({
   trigger,
   content,
+  contentClassName,
 }: {
   trigger: ReactElement;
   content: ReactNode;
+  contentClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -520,11 +524,10 @@ function HoverPopover({
         render={trigger}
         onMouseEnter={show}
         onMouseLeave={hide}
-        onFocus={show}
-        onBlur={hide}
       />
       <PopoverContent
-        className="p-2"
+        // Quill's popover is a fixed 18rem; these cards size to their content.
+        className={cn("w-auto gap-0 p-2", contentClassName)}
         onMouseEnter={show}
         onMouseLeave={hide}
         onClick={(event) => event.stopPropagation()}
@@ -562,7 +565,15 @@ function summarizePrChecks(
 function PrCiLine({ url }: { url: string }) {
   const checks = usePrChecks(url);
   const ci = summarizePrChecks(checks.data);
-  if (!ci) return null;
+  if (!ci) {
+    if (!checks.isPending) return null;
+    return (
+      <div className="flex items-center gap-1.5 text-(--gray-9) text-xs">
+        <Spinner className="size-3" />
+        Checking CI…
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-1.5 text-(--gray-11) text-xs">
       <span
@@ -590,8 +601,14 @@ function PrPopoverContent({ url }: { url: string }) {
         </span>
         {stateLabel && <span className="text-(--gray-9)">{stateLabel}</span>}
       </div>
-      {titles[url] && (
+      {titles[url] ? (
         <div className="truncate font-medium text-sm">{titles[url]}</div>
+      ) : (
+        // The title resolves via gh after open; hold its line so the card
+        // doesn't jump when it lands.
+        <div className="flex h-5 items-center">
+          <Spinner className="size-3" />
+        </div>
       )}
       <PrCiLine url={url} />
     </div>
@@ -623,12 +640,14 @@ function PrPopoverRow({ url }: { url: string }) {
       <span className="min-w-0 flex-1 truncate text-(--gray-11)">
         {titles[url] ?? ""}
       </span>
-      {ci && (
+      {ci ? (
         <span
           title={ci.label}
           className="size-1.5 shrink-0 rounded-full"
           style={{ backgroundColor: ci.color }}
         />
+      ) : (
+        checks.isPending && <Spinner className="size-3 shrink-0" />
       )}
     </button>
   );
