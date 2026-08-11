@@ -113,7 +113,24 @@ export function createEmitEventStep<O extends string, T extends EmitEventStepInp
     }
 }
 
+// Memoized per event object: during flag-evaluations dual write the fork step
+// and this emit step both serialize the same ProcessedEvent, and the second
+// JSON.stringify of properties/person_properties is the expensive part. The
+// cache also keeps the wall-clock-stamped created_at identical across the two
+// produces. WeakMap, so entries die with the event.
+const serializedEventCache = new WeakMap<ProcessedEvent, RawKafkaEvent>()
+
 export function serializeEvent(event: ProcessedEvent): RawKafkaEvent {
+    const cached = serializedEventCache.get(event)
+    if (cached) {
+        return cached
+    }
+    const serialized = buildSerializedEvent(event)
+    serializedEventCache.set(event, serialized)
+    return serialized
+}
+
+function buildSerializedEvent(event: ProcessedEvent): RawKafkaEvent {
     return {
         uuid: event.uuid,
         event: safeClickhouseString(event.event),

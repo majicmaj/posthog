@@ -18,6 +18,7 @@ import {
 import {
     AsyncOutput,
     EventOutput,
+    FlagEvaluationsOutput,
     PersonDistinctIdsOutput,
     PersonMergeEventsOutput,
     PersonsOutput,
@@ -56,6 +57,10 @@ import {
     FeatureFlagCalledDedupService,
     createFeatureFlagCalledDedupService,
 } from './common/feature-flag-called-dedup/feature-flag-called-dedup-service'
+import {
+    FlagEvaluationsService,
+    createFlagEvaluationsService,
+} from './common/flag-evaluations/flag-evaluations-service'
 import { MainLaneOverflowRedirect } from './common/overflow-redirect/main-lane-overflow-redirect'
 import { OverflowLaneOverflowRedirect } from './common/overflow-redirect/overflow-lane-overflow-redirect'
 import { OverflowRedirectService } from './common/overflow-redirect/overflow-redirect-service'
@@ -76,6 +81,7 @@ export interface IngestionConsumerDeps {
     featureFlagCalledDedupRedisPool?: RedisPool
     outputs: IngestionOutputs<
         | EventOutput
+        | FlagEvaluationsOutput
         | IngestionWarningsOutput
         | DlqOutput
         | OverflowOutput
@@ -120,6 +126,7 @@ export class IngestionConsumer {
     private overflowRedirectService?: OverflowRedirectService
     private overflowLaneTTLRefreshService?: OverflowRedirectService
     private featureFlagCalledDedupService?: FeatureFlagCalledDedupService
+    private flagEvaluationsService?: FlagEvaluationsService
     private tokenDistinctIdsToDrop: string[] = []
     private tokenDistinctIdsToSkipPersons: string[] = []
     private tokenDistinctIdsToForceOverflow: string[] = []
@@ -213,6 +220,8 @@ export class IngestionConsumer {
             this.deps.featureFlagCalledDedupRedisPool ?? this.deps.redisPool,
             this.config
         )
+
+        this.flagEvaluationsService = createFlagEvaluationsService(this.config)
 
         this.hogTransformer = deps.hogTransformer
 
@@ -310,6 +319,7 @@ export class IngestionConsumer {
             overflowRedirectService: this.overflowRedirectService,
             overflowLaneTTLRefreshService: this.overflowLaneTTLRefreshService,
             featureFlagCalledDedupService: this.featureFlagCalledDedupService,
+            flagEvaluationsService: this.flagEvaluationsService,
             teamManager: this.deps.teamManager,
             cookielessManager: this.deps.cookielessManager,
             groupTypeManager: this.deps.groupTypeManager,
