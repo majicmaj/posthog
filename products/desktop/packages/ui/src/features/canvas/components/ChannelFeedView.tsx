@@ -486,6 +486,52 @@ export function ExpandablePrompt({
 const CHIP_CLASS =
   "inline-flex h-6 items-center gap-1.5 rounded-md border border-(--gray-6) bg-(--gray-4) px-2 font-medium text-(--gray-11) text-xs transition-colors hover:border-(--gray-7) hover:bg-(--gray-5)";
 
+// A popover that opens on hover (with a short close delay so the pointer can
+// travel into it) and on focus/click for keyboard and touch. Quill has no
+// HoverCard, so this composes one from Popover; content mounts only while
+// open, which keeps per-item data fetches (PR checks, titles) off the feed's
+// steady-state render.
+function HoverPopover({
+  trigger,
+  content,
+}: {
+  trigger: ReactElement;
+  content: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+  const show = useCallback(() => {
+    clearTimeout(closeTimer.current);
+    setOpen(true);
+  }, []);
+  const hide = useCallback(() => {
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setOpen(false), 150);
+  }, []);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={trigger}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+      />
+      <PopoverContent
+        className="p-2"
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {content}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function PrChip({ url }: { url: string }) {
   const { safeUrl, prNumber, stateLabel, Icon, iconColor } = usePrArtifact(url);
   if (!safeUrl) return null;
@@ -660,20 +706,22 @@ const FeedItem = memo(function FeedItem({
       }}
     >
       <CardContent className="flex flex-col px-4 pt-3.5 pb-3">
-        <div className="flex items-start gap-3">
-          <button
-            type="button"
-            className="min-w-0 flex-1 text-left font-semibold text-sm leading-snug"
-            onClick={(event) => {
-              event.stopPropagation();
-              openTask();
-            }}
-          >
-            {task.title || "Untitled task"}
-          </button>
-          <span className="shrink-0 text-(--gray-9) text-xs leading-snug">
-            {formatRelativeTimeShort(task.updated_at)}
-          </span>
+        <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+            <button
+              type="button"
+              className="min-w-0 truncate text-left font-semibold text-sm leading-snug"
+              onClick={(event) => {
+                event.stopPropagation();
+                openTask();
+              }}
+            >
+              {task.title || "Untitled task"}
+            </button>
+            <span className="shrink-0 text-(--gray-9) text-xs">
+              · {formatRelativeTimeShort(task.updated_at)}
+            </span>
+          </div>
           <TaskStatusBadge display={statusDisplay} />
         </div>
         <div className="mt-1.5 text-(--gray-9) text-xs leading-normal">
@@ -776,11 +824,30 @@ const FeedItem = memo(function FeedItem({
           )}
           <span className="flex-1" />
           {authors.length > 0 && (
-            <AvatarGroup size="xs">
-              {authors.map((author) => (
-                <UserAvatar key={author.uuid} user={author} size="xs" />
-              ))}
-            </AvatarGroup>
+            <HoverPopover
+              trigger={
+                <span className="inline-flex cursor-default">
+                  <AvatarGroup size="xs" stacked>
+                    {authors.map((author) => (
+                      <UserAvatar key={author.uuid} user={author} size="xs" />
+                    ))}
+                  </AvatarGroup>
+                </span>
+              }
+              content={
+                <div className="flex flex-col gap-1.5">
+                  {authors.map((author) => (
+                    <div
+                      key={author.uuid}
+                      className="flex items-center gap-2 text-xs"
+                    >
+                      <UserAvatar user={author} size="xs" />
+                      {userDisplayName(author)}
+                    </div>
+                  ))}
+                </div>
+              }
+            />
           )}
         </div>
       </CardContent>
