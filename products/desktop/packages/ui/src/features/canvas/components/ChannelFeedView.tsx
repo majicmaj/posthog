@@ -11,6 +11,7 @@ import {
   RUN_STATUS_LABELS,
   runStatusVariant,
 } from "@posthog/core/canvas/runStatus";
+import type { PrCheck } from "@posthog/core/git/router-schemas";
 import { xmlToPlainText } from "@posthog/core/message-editor/content";
 import {
   Avatar,
@@ -55,7 +56,9 @@ import { canvasArtifactOpenHandler } from "@posthog/ui/features/canvas/utils/can
 import { userDisplayName } from "@posthog/ui/features/canvas/utils/userDisplay";
 import { MarkdownRenderer } from "@posthog/ui/features/editor/components/MarkdownRenderer";
 import { usePrArtifact } from "@posthog/ui/features/git-interaction/usePrArtifact";
+import { usePrTitles } from "@posthog/ui/features/git-interaction/usePrDetails";
 import { usePanelLayoutStore } from "@posthog/ui/features/panels/panelLayoutStore";
+import { usePrChecks } from "@posthog/ui/features/pr-review/usePrChecks";
 import {
   type SidebarPrState,
   useTaskPrStatus,
@@ -532,26 +535,130 @@ function HoverPopover({
   );
 }
 
-function PrChip({ url }: { url: string }) {
-  const { safeUrl, prNumber, stateLabel, Icon, iconColor } = usePrArtifact(url);
+// One line summarizing a PR's CI: failing beats running beats passing.
+function summarizePrChecks(
+  checks: PrCheck[] | null | undefined,
+): { label: string; color: string } | null {
+  if (!checks || checks.length === 0) return null;
+  let failed = 0;
+  let pending = 0;
+  let passed = 0;
+  for (const check of checks) {
+    if (check.bucket === "fail" || check.bucket === "cancel") failed++;
+    else if (check.bucket === "pending") pending++;
+    else if (check.bucket === "pass") passed++;
+  }
+  if (failed) {
+    return {
+      label: `CI failing · ${failed} ${failed === 1 ? "check" : "checks"}`,
+      color: "var(--red-11)",
+    };
+  }
+  if (pending) return { label: "CI running", color: "var(--amber-11)" };
+  if (passed) return { label: "CI passing", color: "var(--green-11)" };
+  return null;
+}
+
+function PrCiLine({ url }: { url: string }) {
+  const checks = usePrChecks(url);
+  const ci = summarizePrChecks(checks.data);
+  if (!ci) return null;
+  return (
+    <div className="flex items-center gap-1.5 text-(--gray-11) text-xs">
+      <span
+        className="size-1.5 rounded-full"
+        style={{ backgroundColor: ci.color }}
+      />
+      {ci.label}
+    </div>
+  );
+}
+
+// The hover card for one PR chip: number + state, truncated title, CI line.
+// Mounted only while the popover is open, so its title/checks fetches never
+// run for chips just sitting in the feed.
+function PrPopoverContent({ url }: { url: string }) {
+  const { prNumber, stateLabel, Icon, iconColor } = usePrArtifact(url);
+  const prUrls = useMemo(() => [url], [url]);
+  const titles = usePrTitles(prUrls);
+  return (
+    <div className="flex max-w-72 flex-col gap-1.5">
+      <div className="flex items-center gap-1.5 text-xs">
+        <Icon size={13} style={{ color: iconColor }} />
+        <span className="font-semibold">
+          {prNumber ? `#${prNumber}` : "PR"}
+        </span>
+        {stateLabel && <span className="text-(--gray-9)">{stateLabel}</span>}
+      </div>
+      {titles[url] && (
+        <div className="truncate font-medium text-sm">{titles[url]}</div>
+      )}
+      <PrCiLine url={url} />
+    </div>
+  );
+}
+
+// One PR inside the "+N PRs" popover: state icon, number, truncated title,
+// CI dot. Same mounted-only-while-open economics as PrPopoverContent.
+function PrPopoverRow({ url }: { url: string }) {
+  const { safeUrl, prNumber, Icon, iconColor } = usePrArtifact(url);
+  const prUrls = useMemo(() => [url], [url]);
+  const titles = usePrTitles(prUrls);
+  const checks = usePrChecks(safeUrl);
+  const ci = summarizePrChecks(checks.data);
   if (!safeUrl) return null;
   return (
     <button
       type="button"
-      className={CHIP_CLASS}
-      title={stateLabel ?? "Pull request"}
+      className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-(--gray-4)"
       onClick={(event) => {
         event.stopPropagation();
         openExternalUrl(safeUrl);
       }}
     >
-      <span
-        className="size-1.5 rounded-full"
-        style={{ backgroundColor: iconColor }}
-      />
-      <Icon size={12} />
-      {prNumber ? `#${prNumber}` : "PR"}
+      <Icon size={13} className="shrink-0" style={{ color: iconColor }} />
+      <span className="shrink-0 font-medium">
+        {prNumber ? `#${prNumber}` : "PR"}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-(--gray-11)">
+        {titles[url] ?? ""}
+      </span>
+      {ci && (
+        <span
+          title={ci.label}
+          className="size-1.5 shrink-0 rounded-full"
+          style={{ backgroundColor: ci.color }}
+        />
+      )}
     </button>
+  );
+}
+
+function PrChip({ url }: { url: string }) {
+  const { safeUrl, prNumber, stateLabel, Icon, iconColor } = usePrArtifact(url);
+  if (!safeUrl) return null;
+  return (
+    <HoverPopover
+      trigger={
+        <button
+          type="button"
+          className={CHIP_CLASS}
+          title={stateLabel ?? "Pull request"}
+          onClick={(event) => {
+            event.stopPropagation();
+            openExternalUrl(safeUrl);
+          }}
+        >
+          <span
+            className="size-1.5 rounded-full"
+            style={{ backgroundColor: iconColor }}
+          />
+          <Icon size={12} />
+          {prNumber ? `#${prNumber}` : "PR"}
+        </button>
+      }
+      content={<PrPopoverContent url={safeUrl} />}
+    />
   );
 }
 
@@ -563,25 +670,18 @@ function OverflowChip({
   children: ReactNode;
 }) {
   return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            className={cn(CHIP_CLASS, "border-dashed text-(--gray-9)")}
-            onClick={(event) => event.stopPropagation()}
-          />
-        }
-      >
-        {label}
-      </PopoverTrigger>
-      <PopoverContent
-        className="min-w-60 p-1"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex flex-col gap-1">{children}</div>
-      </PopoverContent>
-    </Popover>
+    <HoverPopover
+      trigger={
+        <button
+          type="button"
+          className={cn(CHIP_CLASS, "border-dashed text-(--gray-9)")}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {label}
+        </button>
+      }
+      content={<div className="flex min-w-60 flex-col gap-0.5">{children}</div>}
+    />
   );
 }
 
@@ -751,7 +851,7 @@ const FeedItem = memo(function FeedItem({
           {prUrls.length > visiblePrCount && (
             <OverflowChip label={`+${prUrls.length - visiblePrCount} PRs`}>
               {prUrls.slice(visiblePrCount).map((url) => (
-                <PrChip key={url} url={url} />
+                <PrPopoverRow key={url} url={url} />
               ))}
             </OverflowChip>
           )}
