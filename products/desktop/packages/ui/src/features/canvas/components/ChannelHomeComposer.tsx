@@ -493,10 +493,10 @@ export const ChannelHomeComposer = forwardRef<
     <div className="relative flex w-full flex-col">
       {/* Canvas generation always runs in the cloud, so the local/cloud pick
           doesn't apply while canvas mode is armed. The row sits in normal flow
-          under the input (the composer scrolls with the feed, so nothing may
-          float over the cards below). */}
+          above the input, mirroring the new-task page's composer (the composer
+          scrolls with the feed, so nothing may float over the cards below). */}
       {!canvasArmed && (
-        <div className="order-last mt-2 flex items-center gap-2">
+        <div className="mb-1 flex min-w-0 items-center gap-1">
           <WorkspaceModeSelect
             value={workspaceMode}
             onChange={setWorkspaceMode}

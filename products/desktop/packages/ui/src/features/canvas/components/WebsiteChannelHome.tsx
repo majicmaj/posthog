@@ -294,21 +294,17 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
           emptyState={emptyState}
           intro={intro}
           composer={
-            // Card chrome matching the feed cards below, so the composer reads
-            // as the first block of the same centered column.
-            <div className="rounded-xl border bg-(--gray-2) p-3">
-              <ChannelHomeComposer
-                ref={composerRef}
-                channelId={channelId}
-                channelName={channelName}
-                channelContext={channelContext}
-                channelRepositories={channel?.repositories}
-                channelGithubIntegration={channel?.github_integration}
-                onTaskCreated={onTaskCreated}
-                onPendingStart={addPending}
-                onPendingEnd={removePending}
-              />
-            </div>
+            <ChannelHomeComposer
+              ref={composerRef}
+              channelId={channelId}
+              channelName={channelName}
+              channelContext={channelContext}
+              channelRepositories={channel?.repositories}
+              channelGithubIntegration={channel?.github_integration}
+              onTaskCreated={onTaskCreated}
+              onPendingStart={addPending}
+              onPendingEnd={removePending}
+            />
           }
           onOpenTask={handleOpenTask}
           onOpenThread={handleOpenThread}
