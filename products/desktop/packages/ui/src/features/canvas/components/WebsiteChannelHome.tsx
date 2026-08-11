@@ -281,23 +281,6 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
   return (
     <div className="flex h-full min-w-0 bg-gray-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="w-full px-4 pt-3">
-          {/* Same max width as the feed cards so the composer and the column
-              of cards below it read as one centered feed. */}
-          <div className="mx-auto w-full max-w-[660px]">
-            <ChannelHomeComposer
-              ref={composerRef}
-              channelId={channelId}
-              channelName={channelName}
-              channelContext={channelContext}
-              channelRepositories={channel?.repositories}
-              channelGithubIntegration={channel?.github_integration}
-              onTaskCreated={onTaskCreated}
-              onPendingStart={addPending}
-              onPendingEnd={removePending}
-            />
-          </div>
-        </div>
         <ChannelFeedView
           channelId={channelId}
           tasks={tasks}
@@ -306,6 +289,23 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
           isLoading={isLoading}
           emptyState={emptyState}
           intro={intro}
+          composer={
+            // Card chrome matching the feed cards below, so the composer reads
+            // as the first block of the same centered column.
+            <div className="rounded-xl border bg-(--gray-2) p-3">
+              <ChannelHomeComposer
+                ref={composerRef}
+                channelId={channelId}
+                channelName={channelName}
+                channelContext={channelContext}
+                channelRepositories={channel?.repositories}
+                channelGithubIntegration={channel?.github_integration}
+                onTaskCreated={onTaskCreated}
+                onPendingStart={addPending}
+                onPendingEnd={removePending}
+              />
+            </div>
+          }
           onOpenTask={handleOpenTask}
           onOpenThread={handleOpenThread}
         />

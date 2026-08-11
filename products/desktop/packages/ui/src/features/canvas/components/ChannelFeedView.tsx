@@ -1,8 +1,9 @@
 import {
+  AppWindowIcon,
   ArrowSquareOutIcon,
   ChatCircleIcon,
-  FileIcon,
   GitBranchIcon,
+  PlusIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
 import { taskFeedRunStatus } from "@posthog/core/canvas/channelFeed";
@@ -55,6 +56,7 @@ import {
   type SidebarPrState,
   useTaskPrStatus,
 } from "@posthog/ui/features/sidebar/useTaskPrStatus";
+import { FileIcon } from "@posthog/ui/primitives/FileIcon";
 import { useInView } from "@posthog/ui/primitives/hooks/useInView";
 import { openExternalUrl } from "@posthog/ui/shell/openExternal";
 import { Text } from "@radix-ui/themes";
@@ -414,7 +416,7 @@ export function ExpandablePrompt({
 }
 
 const CHIP_CLASS =
-  "inline-flex h-6 items-center gap-1 rounded-md border border-(--gray-6) bg-(--gray-4) px-2 text-(--gray-11) text-xs hover:border-(--gray-7) hover:bg-(--gray-5)";
+  "inline-flex h-6 items-center gap-1.5 rounded-md border border-(--gray-6) bg-(--gray-4) px-2 font-medium text-(--gray-11) text-xs transition-colors hover:border-(--gray-7) hover:bg-(--gray-5)";
 
 function PrChip({ url }: { url: string }) {
   const { safeUrl, prNumber, stateLabel, Icon, iconColor } = usePrArtifact(url);
@@ -510,14 +512,21 @@ const FeedItem = memo(function FeedItem({
     enabled: inView,
     markActivityRead: false,
   });
+  // Only conversational human rows count as comments — agent/system rows
+  // (turn_complete, thread-state events) would inflate the count and render
+  // authorless "U" bubbles in the facepile.
+  const humanMessages = useMemo(
+    () => messages.filter((m) => (m.author_kind ?? "human") === "human"),
+    [messages],
+  );
   const authors = useMemo(() => {
-    const seen = new Map<string, (typeof messages)[number]["author"]>();
-    for (const message of messages) {
-      const key = message.author?.uuid ?? "unknown";
-      if (!seen.has(key)) seen.set(key, message.author);
+    const seen = new Map<string, UserBasic>();
+    for (const message of humanMessages) {
+      const author = message.author;
+      if (author && !seen.has(author.uuid)) seen.set(author.uuid, author);
     }
     return [...seen.values()].slice(0, 4);
-  }, [messages]);
+  }, [humanMessages]);
   const markRead = useCallback(() => {
     markTasksRead([
       { task_id: task.id, seen_before: new Date().toISOString() },
@@ -534,7 +543,7 @@ const FeedItem = memo(function FeedItem({
       size="sm"
       role="button"
       tabIndex={0}
-      className="mx-auto my-1.5 w-full max-w-[660px] cursor-pointer rounded-xl py-0 transition-colors hover:border-(--gray-7) hover:bg-(--gray-3)"
+      className="mx-auto my-1.5 w-full max-w-[660px] cursor-pointer rounded-xl bg-(--gray-2) py-0 transition-colors hover:border-(--gray-7) hover:bg-(--gray-3)"
       onClick={() => {
         markRead();
         onOpenThread(task);
@@ -547,11 +556,11 @@ const FeedItem = memo(function FeedItem({
         }
       }}
     >
-      <CardContent className="flex flex-col gap-2.5 p-3.5">
+      <CardContent className="flex flex-col px-4 pt-3.5 pb-3">
         <div className="flex items-start gap-3">
           <button
             type="button"
-            className="min-w-0 flex-1 text-left font-semibold text-sm"
+            className="min-w-0 flex-1 text-left font-semibold text-sm leading-snug"
             onClick={(event) => {
               event.stopPropagation();
               openTask();
@@ -561,7 +570,7 @@ const FeedItem = memo(function FeedItem({
           </button>
           <TaskStatusBadge display={statusDisplay} />
         </div>
-        <div className="text-(--gray-9) text-xs">
+        <div className="mt-1.5 text-(--gray-9) text-xs leading-normal">
           <ExpandablePrompt
             lines={2}
             prefix={
@@ -574,7 +583,7 @@ const FeedItem = memo(function FeedItem({
               (starter ? "started a new task" : "A new task was started")}
           </ExpandablePrompt>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
           {showRepo && task.repository && (
             <span
               className={cn(CHIP_CLASS, "border-transparent bg-transparent")}
@@ -603,8 +612,12 @@ const FeedItem = memo(function FeedItem({
                 onOpenThread(task);
               }}
             >
-              <FileIcon size={12} />
-              {artifact.name}
+              {artifact.kind === "canvas" ? (
+                <AppWindowIcon size={12} />
+              ) : (
+                <FileIcon filename={artifact.name} size={12} />
+              )}
+              <span className="max-w-40 truncate">{artifact.name}</span>
             </button>
           ))}
           {artifacts.length > 2 && (
@@ -615,36 +628,51 @@ const FeedItem = memo(function FeedItem({
                   type="button"
                   className={cn(CHIP_CLASS, "w-full")}
                 >
-                  <FileIcon size={12} />
-                  {artifact.name}
+                  {artifact.kind === "canvas" ? (
+                    <AppWindowIcon size={12} />
+                  ) : (
+                    <FileIcon filename={artifact.name} size={12} />
+                  )}
+                  <span className="truncate">{artifact.name}</span>
                 </button>
               ))}
             </OverflowChip>
           )}
-          <button
-            type="button"
-            className={cn(
-              CHIP_CLASS,
-              messages.length === 0 &&
+          {humanMessages.length > 0 ? (
+            <button
+              type="button"
+              className={CHIP_CLASS}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenThread(task);
+              }}
+            >
+              <ChatCircleIcon size={12} />
+              <span className="font-semibold text-(--gray-9)">
+                {humanMessages.length}
+              </span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={cn(
+                CHIP_CLASS,
                 "border-transparent bg-transparent text-(--gray-9)",
-            )}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenThread(task);
-            }}
-          >
-            <ChatCircleIcon size={12} />
-            {messages.length || "Comment"}
-          </button>
+              )}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenThread(task);
+              }}
+            >
+              <PlusIcon size={12} />
+              Comment
+            </button>
+          )}
           <span className="flex-1" />
           {authors.length > 0 && (
             <AvatarGroup size="xs">
-              {authors.map((author, index) => (
-                <UserAvatar
-                  key={author?.uuid ?? index}
-                  user={author}
-                  size="xs"
-                />
+              {authors.map((author) => (
+                <UserAvatar key={author.uuid} user={author} size="xs" />
               ))}
             </AvatarGroup>
           )}
@@ -698,17 +726,19 @@ function PendingFeedRow({ pending }: { pending: PendingKickoff }) {
   return (
     <Card
       size="sm"
-      className="mx-auto my-1.5 w-full max-w-[660px] rounded-xl py-0"
+      className="mx-auto my-1.5 w-full max-w-[660px] rounded-xl bg-(--gray-2) py-0"
     >
-      <CardContent className="flex flex-col gap-2.5 p-3.5">
+      <CardContent className="flex flex-col px-4 pt-3.5 pb-3">
         <div className="flex items-start gap-3">
-          <span className="min-w-0 flex-1 font-semibold text-sm">New task</span>
+          <span className="min-w-0 flex-1 font-semibold text-sm leading-snug">
+            New task
+          </span>
           <Badge variant="info">
             <Spinner className="size-2.5" />
             Starting…
           </Badge>
         </div>
-        <div className="text-(--gray-9) text-xs">
+        <div className="mt-1.5 text-(--gray-9) text-xs leading-normal">
           <ExpandablePrompt
             lines={2}
             prefix={<span className="font-medium text-(--gray-11)">You: </span>}
@@ -842,6 +872,7 @@ export function ChannelFeedView({
   isLoading,
   emptyState,
   intro,
+  composer,
   onOpenTask,
   onOpenThread,
 }: {
@@ -855,6 +886,10 @@ export function ChannelFeedView({
    * (name, creation line, onboarding card). When set, the feed renders even
    * with no entries instead of falling back to `emptyState`. */
   intro?: ReactElement;
+  /** The new-session composer, rendered at the top of the feed column
+   * (Twitter-style) so it scrolls away with the content and shares the cards'
+   * width. Rendered in every state, including loading and empty. */
+  composer?: ReactNode;
   onOpenTask: (task: Task) => void;
   onOpenThread: (task: Task) => void;
 }) {
@@ -902,16 +937,32 @@ export function ChannelFeedView({
     prevPendingRef.current = latestPendingId;
   }, [latestPendingId]);
 
+  const composerBlock = composer && (
+    <div className="mx-auto mb-2 w-full max-w-[660px]">{composer}</div>
+  );
+
   if (isLoading && pending.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <Spinner />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full flex-col px-4 pt-4">
+          {composerBlock}
+          <div className="flex justify-center py-16">
+            <Spinner />
+          </div>
+        </div>
       </div>
     );
   }
 
   if (entries.length === 0 && pending.length === 0 && !intro) {
-    return <div className="flex-1 overflow-y-auto">{emptyState}</div>;
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full px-4 pt-4 pb-10">
+          {composerBlock}
+          {emptyState}
+        </div>
+      </div>
+    );
   }
 
   const now = new Date();
@@ -951,9 +1002,8 @@ export function ChannelFeedView({
 
   return (
     <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto">
-      {/* The deeper top padding clears the composer's floating workspace-mode
-          selector, which hangs below the composer over the start of the feed. */}
-      <div className="mx-auto w-full px-4 pt-10 pb-10">
+      <div className="mx-auto w-full px-4 pt-4 pb-10">
+        {composerBlock}
         {intro && <div className="mx-auto w-full max-w-[660px]">{intro}</div>}
         {rows}
       </div>

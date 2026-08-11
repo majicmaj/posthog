@@ -492,12 +492,11 @@ export const ChannelHomeComposer = forwardRef<
   return (
     <div className="relative flex w-full flex-col">
       {/* Canvas generation always runs in the cloud, so the local/cloud pick
-          doesn't apply while canvas mode is armed. The composer sits at the top
-          of the feed, so the row floats below it over the feed's start; the
-          trigger's own fill is translucent, so it carries an opaque backdrop at
-          the button's radius to stop cards showing through. */}
+          doesn't apply while canvas mode is armed. The row sits in normal flow
+          under the input (the composer scrolls with the feed, so nothing may
+          float over the cards below). */}
       {!canvasArmed && (
-        <div className="absolute top-full left-0 z-10 mt-2 flex items-center gap-2 rounded-sm bg-card">
+        <div className="order-last mt-2 flex items-center gap-2">
           <WorkspaceModeSelect
             value={workspaceMode}
             onChange={setWorkspaceMode}
