@@ -49,9 +49,12 @@ import type { ChannelFeedSystemMessage } from "@posthog/ui/features/canvas/hooks
 import { useChannelTaskData } from "@posthog/ui/features/canvas/hooks/useChannelTaskData";
 import { useMarkTaskActivityRead } from "@posthog/ui/features/canvas/hooks/useMarkTaskActivityRead";
 import { useTaskThread } from "@posthog/ui/features/canvas/hooks/useTaskThread";
+import type { ThreadPanelTab } from "@posthog/ui/features/canvas/stores/threadPanelStore";
 import { taskCardNavigation } from "@posthog/ui/features/canvas/taskCardNavigation";
+import { canvasArtifactOpenHandler } from "@posthog/ui/features/canvas/utils/canvasArtifactNavigation";
 import { userDisplayName } from "@posthog/ui/features/canvas/utils/userDisplay";
 import { usePrArtifact } from "@posthog/ui/features/git-interaction/usePrArtifact";
+import { usePanelLayoutStore } from "@posthog/ui/features/panels/panelLayoutStore";
 import {
   type SidebarPrState,
   useTaskPrStatus,
@@ -482,7 +485,7 @@ const FeedItem = memo(function FeedItem({
   inView: boolean;
   showRepo: boolean;
   onOpenTask: (task: Task) => void;
-  onOpenThread: (task: Task) => void;
+  onOpenThread: (task: Task, tab?: ThreadPanelTab) => void;
 }) {
   const { mutate: markTasksRead } = useMarkTaskActivityRead();
   const statusDisplay = useTaskStatusDisplay(task);
@@ -536,6 +539,32 @@ const FeedItem = memo(function FeedItem({
     markRead();
     onOpenTask(task);
   }, [markRead, onOpenTask, task]);
+  const openArtifactTab = usePanelLayoutStore((state) => state.openArtifactTab);
+  // A chip opens its artifact directly: canvases navigate to the canvas, files
+  // open as a tab in the task view (the tab is staged in the layout store, then
+  // the task view is opened to show it). Anything unopenable falls back to the
+  // side pane's Artifacts tab.
+  const openArtifact = useCallback(
+    (artifact: (typeof artifacts)[number]) => {
+      if (artifact.kind === "canvas") {
+        const open = canvasArtifactOpenHandler(artifact.url);
+        if (open) {
+          open();
+          return;
+        }
+      } else if (artifact.artifactId && artifact.runId) {
+        openArtifactTab(task.id, {
+          runId: artifact.runId,
+          artifactId: artifact.artifactId,
+          name: artifact.name,
+        });
+        openTask();
+        return;
+      }
+      onOpenThread(task, "artifacts");
+    },
+    [onOpenThread, openArtifactTab, openTask, task],
+  );
 
   const visiblePrCount = prUrls.length >= 5 ? 1 : 2;
   return (
@@ -609,7 +638,7 @@ const FeedItem = memo(function FeedItem({
               className={CHIP_CLASS}
               onClick={(event) => {
                 event.stopPropagation();
-                onOpenThread(task);
+                openArtifact(artifact);
               }}
             >
               {artifact.kind === "canvas" ? (
@@ -627,6 +656,10 @@ const FeedItem = memo(function FeedItem({
                   key={artifact.key}
                   type="button"
                   className={cn(CHIP_CLASS, "w-full")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openArtifact(artifact);
+                  }}
                 >
                   {artifact.kind === "canvas" ? (
                     <AppWindowIcon size={12} />
@@ -644,7 +677,7 @@ const FeedItem = memo(function FeedItem({
               className={CHIP_CLASS}
               onClick={(event) => {
                 event.stopPropagation();
-                onOpenThread(task);
+                onOpenThread(task, "comments");
               }}
             >
               <ChatCircleIcon size={12} />
@@ -661,7 +694,7 @@ const FeedItem = memo(function FeedItem({
               )}
               onClick={(event) => {
                 event.stopPropagation();
-                onOpenThread(task);
+                onOpenThread(task, "comments");
               }}
             >
               <PlusIcon size={12} />
@@ -699,7 +732,7 @@ function FeedRow({
   task: Task;
   showRepo: boolean;
   onOpenTask: (task: Task) => void;
-  onOpenThread: (task: Task) => void;
+  onOpenThread: (task: Task, tab?: ThreadPanelTab) => void;
 }) {
   const [ref, inView] = useInView<HTMLDivElement>({ rootMargin: "1200px 0px" });
   return (
@@ -891,7 +924,7 @@ export function ChannelFeedView({
    * width. Rendered in every state, including loading and empty. */
   composer?: ReactNode;
   onOpenTask: (task: Task) => void;
-  onOpenThread: (task: Task) => void;
+  onOpenThread: (task: Task, tab?: ThreadPanelTab) => void;
 }) {
   const entries = useMemo<FeedEntry[]>(
     () => mergeFeedEntries(tasks, systemMessages ?? []),

@@ -31,7 +31,10 @@ import { useChannelsLayout } from "@posthog/ui/features/canvas/hooks/useChannels
 import { useChannelTaskMutations } from "@posthog/ui/features/canvas/hooks/useChannelTasks";
 import { useFolderInstructions } from "@posthog/ui/features/canvas/hooks/useFolderInstructions";
 import { useTaskChannels } from "@posthog/ui/features/canvas/hooks/useTaskChannels";
-import { useThreadPanelStore } from "@posthog/ui/features/canvas/stores/threadPanelStore";
+import {
+  type ThreadPanelTab,
+  useThreadPanelStore,
+} from "@posthog/ui/features/canvas/stores/threadPanelStore";
 import { SuggestedPromptCard } from "@posthog/ui/features/task-detail/components/SuggestedPromptCard";
 import { taskDetailQuery } from "@posthog/ui/features/tasks/queries";
 import { useSetHeaderContent } from "@posthog/ui/hooks/useSetHeaderContent";
@@ -204,7 +207,8 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
   );
 
   const handleOpenThread = useCallback(
-    (task: Task) => openThread(channelId, task.id),
+    (task: Task, tab?: ThreadPanelTab) =>
+      openThread(channelId, task.id, tab ? { tab } : undefined),
     [channelId, openThread],
   );
 

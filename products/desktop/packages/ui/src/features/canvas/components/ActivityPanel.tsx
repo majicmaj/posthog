@@ -16,6 +16,7 @@ import {
   ThreadReplyComposer,
 } from "@posthog/ui/features/canvas/components/ThreadPanel";
 import { useThreadConversation } from "@posthog/ui/features/canvas/hooks/useThreadConversation";
+import { useThreadPanelStore } from "@posthog/ui/features/canvas/stores/threadPanelStore";
 import { useCommentNavigationStore } from "@posthog/ui/features/sessions/commentNavigationStore";
 import { buildConversationItems } from "@posthog/ui/features/sessions/components/buildConversationItems";
 import { useCommentsEnabled } from "@posthog/ui/features/sessions/useCommentsEnabled";
@@ -169,6 +170,20 @@ function ActivityConversation({
         : [],
     [tab, events, isPromptPending],
   );
+
+  // A caller can open the panel pointed at a tab (the feed's comment chip
+  // lands on Comments, its "+N files" rows on Artifacts). Nonce-gated so the
+  // same chip re-applies after the user tabs away, and one-shot per request.
+  const tabRequest = useThreadPanelStore(
+    (state) => state.tabRequestByTask[taskId],
+  );
+  const seenTabRequestNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!tabRequest || tabRequest.nonce === seenTabRequestNonce.current) return;
+    seenTabRequestNonce.current = tabRequest.nonce;
+    if (tabRequest.tab === "comments" && !commentsEnabled) return;
+    setTab(tabRequest.tab);
+  }, [tabRequest, commentsEnabled]);
 
   // A thread picked on the artifact itself lives in the Comments tab, so the
   // pick has to bring the tab with it. Only a fresh request switches tabs: a
