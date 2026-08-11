@@ -225,6 +225,31 @@ function TaskStatusBadge({ display }: { display: TaskStatusDisplay }) {
   );
 }
 
+// The one-line task summary pinned under the activity panel's tabs: icon,
+// truncated title, live status. Links to the task's full view.
+export function TaskSummaryRow({
+  task,
+  channelId,
+}: {
+  task: Task;
+  channelId: string;
+}) {
+  const statusDisplay = useTaskStatusDisplay(task);
+  return (
+    <Link
+      {...taskCardNavigation(channelId, task.id)}
+      preload="intent"
+      className="flex min-w-0 items-center gap-2 border-b px-3 py-2 text-inherit no-underline outline-none transition-colors hover:bg-fill-hover focus-visible:ring-2 focus-visible:ring-(--accent-8)"
+    >
+      <TaskTabIcon task={task} size={14} />
+      <span className="min-w-0 flex-1 truncate font-medium text-[13px]">
+        {task.title || "Untitled task"}
+      </span>
+      <TaskStatusBadge display={statusDisplay} />
+    </Link>
+  );
+}
+
 // A kickoff a user just submitted, before its task exists on the backend. The
 // feed shows it optimistically so a submit reacts instantly instead of waiting
 // on the create round trip; it's swapped for the real card once created.

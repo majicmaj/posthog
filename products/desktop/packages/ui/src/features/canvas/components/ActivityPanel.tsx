@@ -7,7 +7,7 @@ import { Button, Tabs, TabsList, TabsTrigger } from "@posthog/quill";
 import { ANALYTICS_EVENTS } from "@posthog/shared/analytics-events";
 import type { Task } from "@posthog/shared/domain-types";
 import { ActivityTimeline } from "@posthog/ui/features/canvas/components/ActivityTimeline";
-import { TaskCard } from "@posthog/ui/features/canvas/components/ChannelFeedView";
+import { TaskSummaryRow } from "@posthog/ui/features/canvas/components/ChannelFeedView";
 import { TaskArtifactsList } from "@posthog/ui/features/canvas/components/TaskArtifactsList";
 import { TaskCommentsList } from "@posthog/ui/features/canvas/components/TaskCommentsList";
 import {
@@ -274,11 +274,7 @@ function ActivityConversation({
         onClose={onClose}
       />
 
-      {showTaskSummary && (
-        <div className="z-10 px-2">
-          <TaskCard task={task} channelId={channelId} inThread />
-        </div>
-      )}
+      {showTaskSummary && <TaskSummaryRow task={task} channelId={channelId} />}
       <div
         ref={scrollRef}
         aria-busy={!isReady}
