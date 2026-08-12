@@ -27,8 +27,8 @@ def test_organization_deletion_cascades_all_billing_alert_rows() -> None:
     alert = BillingAlertConfiguration.objects.create(
         organization=organization,
         team=team,
-        name="Spend increase",
-        threshold_percentage=Decimal("10"),
+        name="Period spend cap",
+        threshold_value=Decimal("10"),
     )
     claim = BillingAlertEvaluationClaim.objects.create(
         alert=alert,
