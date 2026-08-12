@@ -20,7 +20,7 @@ export const ConversationsAvailabilityUpdateBody = /* @__PURE__ */ zod
             .uuid()
             .nullish()
             .describe(
-                "UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time."
+                "UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time, and omitting it leaves the stored group as it is."
             ),
     })
     .describe("Payload for changing one agent's availability.")

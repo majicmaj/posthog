@@ -97,7 +97,7 @@ export interface SetAgentAvailabilityApi {
     /** False takes the agent out of ticket assignment and hands their open tickets to handoff_role. True makes them assignable again. Tickets already handed off are not given back. */
     is_available: boolean
     /**
-     * UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time.
+     * UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time, and omitting it leaves the stored group as it is.
      * @nullable
      */
     handoff_role_id?: string | null
