@@ -1,4 +1,4 @@
-import { MakeLogicType, actions, afterMount, connect, kea, listeners, path, reducers } from 'kea'
+import { MakeLogicType, actions, afterMount, connect, kea, listeners, path, reducers, selectors } from 'kea'
 import { loaders } from 'kea-loaders'
 
 import { lemonToast } from 'lib/lemon-ui/LemonToast/LemonToast'
@@ -23,7 +23,11 @@ export interface AIRunPreferenceDraft {
 
 const EMPTY_DRAFT: AIRunPreferenceDraft = { model: null, reasoning_effort: null }
 
-export function draftFromStored(stored: TasksAIRunPreferencesApi | null | undefined): AIRunPreferenceDraft {
+function isDraftChanged(draft: AIRunPreferenceDraft, stored: AIRunPreferenceDraft): boolean {
+    return draft.model !== stored.model || draft.reasoning_effort !== stored.reasoning_effort
+}
+
+function draftFromStored(stored: TasksAIRunPreferencesApi | null | undefined): AIRunPreferenceDraft {
     return { model: stored?.model ?? null, reasoning_effort: stored?.reasoning_effort ?? null }
 }
 
@@ -41,6 +45,9 @@ function payloadFromDraft(draft: AIRunPreferenceDraft, catalogue: ModelChoiceApi
 export interface taskAgentDefaultsLogicValues {
     currentProjectId: number | null // projectLogic
     catalogue: ModelChoiceApi[] // modelCatalogueLogic
+    myConfig: TasksUserConfigResponseApi | null // taskRunDefaultsLogic
+    teamDraftDirty: boolean
+    myDraftDirty: boolean
     resolvedDefaults: TasksResolvedAIRunDefaultsApi | null // taskRunDefaultsLogic
     myDraft: AIRunPreferenceDraft
     myPreferences: TasksUserConfigResponseApi | null
@@ -132,7 +139,7 @@ export const taskAgentDefaultsLogic = kea<taskAgentDefaultsLogicType>([
             projectLogic,
             ['currentProjectId'],
             taskRunDefaultsLogic,
-            ['resolvedDefaults'],
+            ['myConfig', 'resolvedDefaults'],
             modelCatalogueLogic,
             ['catalogue'],
         ],
@@ -193,6 +200,25 @@ export const taskAgentDefaultsLogic = kea<taskAgentDefaultsLogicType>([
             },
         },
     })),
+
+    selectors({
+        // Whether there's anything to send. The stored side is the loaded value, not the draft's own
+        // history: `myPreferences` only ever holds a save response, so the draft's source of truth on
+        // mount is `myConfig` — the same value the draft is hydrated from.
+        teamDraftDirty: [
+            (s) => [s.teamDraft, s.teamPreferences],
+            (draft: AIRunPreferenceDraft, stored: TasksAIRunPreferencesApi | null): boolean =>
+                isDraftChanged(draft, draftFromStored(stored)),
+        ],
+        myDraftDirty: [
+            (s) => [s.myDraft, s.myPreferences, s.myConfig],
+            (
+                draft: AIRunPreferenceDraft,
+                saved: TasksUserConfigResponseApi | null,
+                loaded: TasksUserConfigResponseApi | null
+            ): boolean => isDraftChanged(draft, draftFromStored((saved ?? loaded)?.ai_run_preferences)),
+        ],
+    }),
 
     listeners(({ actions, values }) => ({
         submitTeamDraft: () => {
