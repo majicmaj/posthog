@@ -25,6 +25,8 @@ function PreferenceEditor({
     inheritLabel,
     onChange,
     onSave,
+    onReset,
+    canReset,
 }: {
     draft: AIRunPreferenceDraft
     dirty: boolean
@@ -32,6 +34,8 @@ function PreferenceEditor({
     inheritLabel: string
     onChange: (draft: Partial<AIRunPreferenceDraft>) => void
     onSave: () => void
+    onReset?: () => void
+    canReset?: boolean
 }): JSX.Element {
     const { catalogue } = useValues(modelCatalogueLogic)
 
@@ -94,6 +98,15 @@ function PreferenceEditor({
             >
                 Save
             </LemonButton>
+            {onReset && (
+                <LemonButton
+                    type="secondary"
+                    onClick={onReset}
+                    disabledReason={canReset ? undefined : 'Already using the project default'}
+                >
+                    Reset to project default
+                </LemonButton>
+            )}
         </div>
     )
 }
@@ -115,9 +128,10 @@ export function TaskAgentProjectDefaultSettings(): JSX.Element {
 }
 
 export function TaskAgentMyPreferenceSettings(): JSX.Element {
-    const { myDraft, myDraftDirty, myPreferencesLoading, resolvedDefaults } = useValues(taskAgentDefaultsLogic)
+    const { myDraft, myDraftDirty, myPreferencesLoading, canResetMyPreference, resolvedDefaults } =
+        useValues(taskAgentDefaultsLogic)
     const { catalogue } = useValues(modelCatalogueLogic)
-    const { setMyDraft, submitMyDraft } = useActions(taskAgentDefaultsLogic)
+    const { setMyDraft, submitMyDraft, resetMyPreference } = useActions(taskAgentDefaultsLogic)
 
     return (
         <div className="flex flex-col gap-2">
@@ -128,6 +142,8 @@ export function TaskAgentMyPreferenceSettings(): JSX.Element {
                 inheritLabel="Use project default"
                 onChange={setMyDraft}
                 onSave={submitMyDraft}
+                onReset={resetMyPreference}
+                canReset={canResetMyPreference}
             />
             <p className="text-secondary mb-0">
                 {resolvedDefaults?.model ? (
@@ -137,7 +153,7 @@ export function TaskAgentMyPreferenceSettings(): JSX.Element {
                         {resolvedDefaults.reasoning_effort ? (
                             <> ({getEffortLabel(resolvedDefaults.reasoning_effort)} effort)</>
                         ) : null}{' '}
-                        from the {resolvedDefaults.source === 'user' ? 'preference above' : 'project default'}.
+                        from {resolvedDefaults.source === 'user' ? 'your default above' : 'the project default'}.
                     </>
                 ) : (
                     <>No default is set — runs use each surface's built-in model.</>
