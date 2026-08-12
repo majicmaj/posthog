@@ -12,7 +12,7 @@ import {
     Welcome,
 } from 'products/posthog_ai/frontend/api/primitives'
 import { modelCatalogueLogic } from 'products/posthog_ai/frontend/logics/modelCatalogueLogic'
-import { getRuntimeAdapterForModel, resolveEffortForModel, } from 'products/posthog_ai/frontend/utils/composerModels'
+import { getRuntimeAdapterForModel, resolveEffortForModel } from 'products/posthog_ai/frontend/utils/composerModels'
 import {
     cycleMode,
     getModesForRuntimeAdapter,

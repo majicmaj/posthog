@@ -96,7 +96,7 @@ export interface taskTrackerSceneLogicValues {
     displayEffort: ReasoningEffortEnumApi
     displayModel: string
     displayHeadline: string
-    headlineSeed: number;
+    headlineSeed: number
     isDefaultSelection: boolean
     isSubmittingTask: boolean
     newTaskData: TaskCreateForm

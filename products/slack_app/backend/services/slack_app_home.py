@@ -149,6 +149,7 @@ MODAL_BLOCK_RUNTIME_ADAPTER = "block_runtime_adapter"
 MODAL_BLOCK_MODEL = "block_model"
 MODAL_BLOCK_REASONING_EFFORT = "block_reasoning_effort"
 
+
 @dataclass(frozen=True)
 class PickerEffort:
     value: str
