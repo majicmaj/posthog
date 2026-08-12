@@ -3,6 +3,7 @@ import {
   CaretLeftIcon,
   CaretRightIcon,
   ChartLine,
+  EnvelopeSimple,
   GitDiffIcon,
   SquaresFourIcon,
 } from "@phosphor-icons/react";
@@ -71,6 +72,7 @@ import {
   navigateToArchived,
   navigateToChannel,
   navigateToCommandCenter,
+  navigateToInbox,
   navigateToLoops,
 } from "@posthog/ui/router/navigationBridge";
 import { useAppView } from "@posthog/ui/router/useAppView";
@@ -265,6 +267,18 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
         action: "settings",
         shortcut: SHORTCUTS.SETTINGS,
         onRun: () => openSettingsDialog(),
+      },
+      {
+        id: "inbox",
+        label: "Inbox",
+        keywords: "reports pull requests agents notifications",
+        icon: <EnvelopeSimple size={12} className="text-gray-11" />,
+        action: "open-inbox",
+        shortcut: SHORTCUTS.INBOX,
+        onRun: () => {
+          closeSettingsDialog();
+          navigateToInbox();
+        },
       },
       {
         id: "archived",
