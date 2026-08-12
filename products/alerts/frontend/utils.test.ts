@@ -1,4 +1,4 @@
-import { AlertsTab, getActiveAlertsTab, getAlertsDescription } from './utils'
+import { AlertsTab, getActiveAlertsTab } from './utils'
 
 describe('getActiveAlertsTab', () => {
     it.each([
@@ -36,14 +36,5 @@ describe('getActiveAlertsTab', () => {
         },
     ])('$name', ({ name: _, expected, ...state }) => {
         expect(getActiveAlertsTab(state)).toBe(expected)
-    })
-})
-
-describe('getAlertsDescription', () => {
-    it.each([
-        [AlertsTab.INSIGHTS, 'Monitor insight metrics and get notified when conditions are met.'],
-        [AlertsTab.LOGS, 'Monitor matching logs and get notified when they cross a threshold.'],
-    ])('returns the correct description for %s', (tab: AlertsTab, expected: string) => {
-        expect(getAlertsDescription(tab)).toBe(expected)
     })
 })
