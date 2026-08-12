@@ -39,6 +39,7 @@ class CanvasSerializer(serializers.ModelSerializer):
             "template_id",
             "context",
             "generation_task_id",
+            "discussion_task_id",
             "pinned",
             "pinned_at",
             "current_version_id",
