@@ -58,14 +58,17 @@ import { track } from "@posthog/ui/shell/analytics";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  activityReadPayload,
   type ActivityFeedView,
+  activityReadPayload,
   getActivityItemsForView,
   getUnreadActivityItems,
   markLoadedReadLabel,
 } from "./activityFeed";
 
-const ACTIVITY_FEED_VIEWS: readonly { value: ActivityFeedView; label: string }[] = [
+const ACTIVITY_FEED_VIEWS: readonly {
+  value: ActivityFeedView;
+  label: string;
+}[] = [
   { value: "all", label: "All" },
   { value: "you", label: "You" },
   { value: "agent", label: "Agent" },
@@ -88,9 +91,7 @@ function ChannelSuffix({ channelName }: { channelName: string | null }) {
   return (
     <>
       {" in "}
-      <span className="font-medium text-xs">
-        #{channelName}
-      </span>
+      <span className="font-medium text-xs">#{channelName}</span>
     </>
   );
 }
@@ -293,12 +294,12 @@ export function ActivityRow({
             </span>
             {item.isUnread && !compact && <Badge variant="info">New</Badge>}
             {!compact && (
-              <span className="shrink-0 text-xs text-muted-foreground">
+              <span className="shrink-0 text-muted-foreground text-xs">
                 {formatRelativeTimeShort(item.activityAt)}
               </span>
             )}
           </span>
-          <span className="block truncate text-xs text-muted-foreground">
+          <span className="block truncate text-muted-foreground text-xs">
             {item.taskTitle}
           </span>
           {item.snippet && !compact && (
@@ -311,7 +312,7 @@ export function ActivityRow({
         </span>
       </button>
       {compact && (
-        <span className="pointer-events-none absolute top-1.5 right-2 text-xs text-muted-foreground">
+        <span className="pointer-events-none absolute top-1.5 right-2 text-muted-foreground text-xs">
           {formatRelativeTimeShort(item.activityAt)}
         </span>
       )}
@@ -413,7 +414,11 @@ export function ActivityView() {
 
   const activityTabs = (
     <Tabs value={view} onValueChange={handleViewChange}>
-      <TabsList variant="line" aria-label="Activity views" className="h-auto gap-0.5">
+      <TabsList
+        variant="line"
+        aria-label="Activity views"
+        className="h-auto gap-0.5"
+      >
         {ACTIVITY_FEED_VIEWS.map((activityView) => (
           <TabsTrigger
             key={activityView.value}
@@ -469,9 +474,7 @@ export function ActivityView() {
             <EmptyMedia variant="icon">
               <BellIcon size={20} />
             </EmptyMedia>
-            <EmptyTitle>
-              {emptyActivityTitle(view, unreadsOnly)}
-            </EmptyTitle>
+            <EmptyTitle>{emptyActivityTitle(view, unreadsOnly)}</EmptyTitle>
             <EmptyDescription>
               {unreadsOnly
                 ? "You're all caught up."
@@ -535,8 +538,8 @@ export function ActivityView() {
       <div className="mx-auto w-full max-w-[680px] px-4 py-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold">Activity</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="font-bold text-xl">Activity</h1>
+            <p className="text-muted-foreground text-sm">
               Task updates and comment notifications across{" "}
               {spacesLayout ? "spaces" : "channels"}.
             </p>
