@@ -920,6 +920,7 @@ class LogsAlertViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
             request.user,
             "logs alert destination created",
             {"alert_id": str(alert.id), "type": data["type"], "event_kinds": list(EVENT_KINDS)},
+            request=request,
         )
         response = LogsAlertDestinationResponseSerializer({"hog_function_ids": [hf.id for hf in hog_functions]})
         return Response(response.data, status=201)
@@ -948,6 +949,7 @@ class LogsAlertViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
             request.user,
             "logs alert destination deleted",
             {"alert_id": str(alert.id), "count": len(hog_function_ids)},
+            request=request,
         )
         return Response(status=204)
 
@@ -1035,7 +1037,7 @@ class LogsAlertViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
                     ],
                 ),
             )
-        report_user_action(request.user, "logs alert reset", {"alert_id": str(alert.id)})
+        report_user_action(request.user, "logs alert reset", {"alert_id": str(alert.id)}, request=request)
         return Response(self.get_serializer(alert).data)
 
     @extend_schema(
