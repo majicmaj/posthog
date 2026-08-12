@@ -53,6 +53,7 @@ export interface LogsAlertFormType {
 export interface LogsAlertFormLogicProps {
     alert: LogsAlertConfigurationApi | null
     onCreateSuccess?: () => void
+    onSubmitSuccess?: () => void
 }
 
 function extractFilterGroup(alert: LogsAlertConfigurationApi | null): UniversalFiltersGroup {
@@ -374,6 +375,7 @@ export const logsAlertFormLogic = kea<logsAlertFormLogicType>([
                 }
 
                 actions.loadAlerts()
+                props.onSubmitSuccess?.()
                 if (!props.alert) {
                     props.onCreateSuccess?.()
                     if (!notificationsConfigured) {
