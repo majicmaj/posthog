@@ -51,7 +51,7 @@ export const FirstStep: Story = {
 export const ConnectStep: Story = {
     args: {
         steps: DEFAULT_ONBOARDING_STEPS,
-        stepIndex: 3,
+        stepIndex: DEFAULT_ONBOARDING_STEPS.findIndex((step) => step.key === 'connect'),
         stepActions: {
             connect: (
                 <div className="flex flex-wrap items-center gap-2">

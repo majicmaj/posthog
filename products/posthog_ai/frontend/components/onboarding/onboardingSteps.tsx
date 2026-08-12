@@ -46,16 +46,18 @@ export const DEFAULT_ONBOARDING_STEPS: readonly OnboardingStep[] = [
         body: 'Give it a job with more than one step, like auditing your event tracking or fixing the bug behind an error spike. It writes a plan, you approve it, and it works in the background while results land in your inbox.',
     },
     {
-        key: 'connect',
-        eyebrow: 'Connect',
-        headline: 'Connect GitHub, so it can read how your events actually fire',
-        body: 'With GitHub connected it grounds answers in what your product really does, reviews and fixes your PostHog instrumentation, and opens any change it recommends as a pull request. If you already use PostHog Code, you are most likely set up.',
-    },
-    {
         key: 'skills',
         eyebrow: 'Skills',
         headline: 'Teach it how your team works',
         body: 'Skills are reusable instructions the agent follows every time: your metric definitions, naming conventions, the weekly report format. Create them in PostHog, or keep them in your repo so they stay versioned and reviewable.',
+    },
+    // Connect sits directly before the starter prompts: it is the one step with lasting value, and one of
+    // those prompts ends in a pull request when GitHub is connected.
+    {
+        key: 'connect',
+        eyebrow: 'Connect',
+        headline: 'Connect GitHub, so it can read how your events actually fire',
+        body: 'With GitHub connected it grounds answers in what your product really does, reviews and fixes your PostHog instrumentation, and opens any change it recommends as a pull request. If you already use PostHog Code, you are most likely set up.',
     },
     {
         key: 'start',
