@@ -7,6 +7,7 @@ import {
     tracingSpansAttributesRetrieve,
 } from 'products/tracing/frontend/generated/api'
 import type { _TracingAttributeBreakdownRowApi } from 'products/tracing/frontend/generated/api.schemas'
+import { tracingFiltersLogic } from 'products/tracing/frontend/tracingFiltersLogic'
 
 import { facetCountsLogic } from './facetCountsLogic'
 
@@ -57,6 +58,26 @@ describe('facetCountsLogic', () => {
             expect.objectContaining({
                 query: expect.objectContaining({ breakdownKey: 'service_name', facetSearch: 'kaf' }),
             })
+        )
+    })
+
+    it('counts the population the chosen view mode lists, refetching when it changes', async () => {
+        // Traces view lists one row per trace, matched on its root span, so the counts have to be
+        // root-scoped or a value carried only by child spans reads as selectable when it isn't.
+        logic.mount()
+        await expectLogic(logic).toDispatchActions(['loadFacetValuesSuccess'])
+        expect(mockBreakdown).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({ query: expect.objectContaining({ rootSpans: true }) })
+        )
+        mockBreakdown.mockClear()
+
+        tracingFiltersLogic({ id: ID }).actions.setViewMode('spans')
+        await expectLogic(logic).toDispatchActions(['loadFacetValues', 'loadFacetValuesSuccess'])
+
+        expect(mockBreakdown).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({ query: expect.objectContaining({ rootSpans: false }) })
         )
     })
 
