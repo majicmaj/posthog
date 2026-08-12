@@ -1,0 +1,47 @@
+/*
+ * Full-screen geometry for the onboarding takeover.
+ *
+ * Quill's dialog rules live in `@layer components` (packages/quill/packages/primitives/src/dialog.css),
+ * where `.quill-dialog__content` pins the popup to a centered, viewport-inset box: a ~10vh top gap, a
+ * `max-width: 24rem` clamp above 640px that even `size="full"` doesn't lift, and a `translate: -50% 0`
+ * that pairs with `inset-inline-start: 50%`. These rules are deliberately unlayered so they win the
+ * cascade outright rather than depending on where the app's utility layer sorts — the same approach
+ * lemon-skin.scss documents.
+ */
+.PhaiOnboardingTakeover {
+    inset-inline-start: 0;
+    top: 0;
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+
+    /* The dialog sets `--text-xs` for compact popups; this surface sets its own type per element. */
+    font-size: var(--text-sm, 0.875rem);
+    border-radius: 0;
+    box-shadow: none;
+    translate: none;
+}
+
+/*
+ * Quill assumes a header/body/footer dialog and hard-codes `auto minmax(0, 1fr) auto` whenever a
+ * `DialogBody` is present. This takeover has no header row, so that template would hand the `1fr` to the
+ * footer and strand the content at the top. Two rows: the body absorbs the height, the footer stays pinned.
+ */
+.PhaiOnboardingTakeover:has([data-slot='dialog-body']) {
+    grid-template-rows: minmax(0, 1fr) auto;
+}
+
+/* The scroll viewport only centers its content if it fills the row it sits in. */
+.PhaiOnboardingTakeover [data-slot='dialog-body'] > [data-slot='scroll-area-viewport'] {
+    min-height: 100%;
+}
+
+[dir='rtl'] .PhaiOnboardingTakeover {
+    translate: none;
+}
+
+.PhaiOnboardingTakeover__step {
+    /* One measure of running text, centered, so the copy stays readable on a full-width surface. */
+    max-width: 40rem;
+}

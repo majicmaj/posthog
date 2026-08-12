@@ -1,4 +1,4 @@
-import { useActions, useValues } from 'kea'
+import { useActions, useMountedLogic, useValues } from 'kea'
 import { router } from 'kea-router'
 import { useRef } from 'react'
 
@@ -19,6 +19,7 @@ import { ComposerModelEffortPickers } from '../../../components/composer/Compose
 import { ComposerModePicker } from '../../../components/composer/ComposerModePicker'
 import { ComposerModeShortcut } from '../../../components/composer/ComposerModeShortcut'
 import { useDebouncedDraft } from '../../../components/composer/useDebouncedDraft'
+import { OnboardingReplayButton } from '../../../components/onboarding/OnboardingReplayButton'
 import { taskTrackerSceneLogic } from '../taskTrackerSceneLogic'
 import { RepositorySelector } from './RepositorySelector'
 
@@ -27,6 +28,10 @@ export function TaskComposer(): JSX.Element {
         useActions(taskTrackerSceneLogic)
     const { newTaskData, isSubmittingTask, activeSuggestionGroup, displayHeadline, consentBlocked } =
         useValues(taskTrackerSceneLogic)
+
+    // The bound instance's key — 'scene' on `/ai` and `/tasks`, the panel key when embedded. The onboarding
+    // takeover is keyed the same way, so a starter prompt chosen on replay reaches this composer.
+    const panelId = useMountedLogic(taskTrackerSceneLogic).props.panelId
 
     // Buffer the description locally and debounce the write to kea so each keystroke is a cheap, isolated
     // re-render instead of a store dispatch. `Composer.Root` already blocks send on an empty `draft.value`
@@ -45,7 +50,11 @@ export function TaskComposer(): JSX.Element {
     return (
         <div className="flex flex-col h-full min-h-0 items-center justify-center overflow-y-auto p-4">
             <div className="w-full max-w-2xl flex flex-col items-center gap-4">
-                <Welcome headline={displayHeadline} />
+                <Welcome headline={displayHeadline}>
+                    {/* Temporary migration affordance — delete with the rest of the onboarding takeover
+                        once everyone is on the new PostHog AI. */}
+                    <OnboardingReplayButton panelId={panelId} />
+                </Welcome>
 
                 <Suggestions.Root
                     activeGroup={activeSuggestionGroup}
