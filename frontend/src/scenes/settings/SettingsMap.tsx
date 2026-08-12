@@ -44,6 +44,7 @@ import {
 import { AccessControlLevel, AccessControlResourceType, Realm } from '~/types'
 
 import { AISection } from 'products/conversations/frontend/scenes/settings/AISection'
+import { AvailabilitySection } from 'products/conversations/frontend/scenes/settings/AvailabilitySection'
 import { GeneralSection } from 'products/conversations/frontend/scenes/settings/GeneralSection'
 import { NotificationsSection } from 'products/conversations/frontend/scenes/settings/NotificationsSection'
 import { ZendeskImportSection } from 'products/conversations/frontend/scenes/settings/ZendeskImportSection'
@@ -1207,6 +1208,31 @@ export const SETTINGS_MAP: SettingSection[] = [
                     'slack',
                     'teams',
                     'microsoft',
+                ],
+            },
+            {
+                id: 'conversations-availability',
+                title: 'Availability',
+                description:
+                    "Set who is taking tickets right now, and where each person's open tickets go while they're away.",
+                component: <AvailabilitySection />,
+                allowForTeam: (t) => !!t?.conversations_enabled,
+                keywords: [
+                    'availability',
+                    'available',
+                    'unavailable',
+                    'out of office',
+                    'ooo',
+                    'away',
+                    'rotation',
+                    'oncall',
+                    'on call',
+                    'holiday',
+                    'assign',
+                    'handoff',
+                    'support',
+                    'conversation',
+                    'ticket',
                 ],
             },
             {

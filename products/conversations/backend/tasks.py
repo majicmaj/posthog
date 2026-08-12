@@ -28,6 +28,7 @@ from posthog.comment.formatting import (
     rich_content_to_slack_payload,
 )
 from posthog.egress.github.transport import GitHubRateLimitError
+from posthog.exceptions_capture import capture_exception
 from posthog.helpers.slack_identity import resolve_slack_avatar_by_email
 from posthog.models.activity_logging.activity_log import Change, Detail, log_activity
 from posthog.models.comment import Comment as CommentModel
@@ -38,7 +39,7 @@ from posthog.scoping_audit import skip_team_scope_audit
 from posthog.storage import object_storage
 
 from products.conversations.backend.cache import NUDGE_DISMISS_TTL, suppress_nudge
-from products.conversations.backend.events import capture_ticket_status_changed
+from products.conversations.backend.events import capture_ticket_assigned, capture_ticket_status_changed
 from products.conversations.backend.mailgun import (
     MailgunDomainNotRegistered,
     MailgunNotConfigured,
@@ -47,16 +48,19 @@ from products.conversations.backend.mailgun import (
     send_mime,
 )
 from products.conversations.backend.models import (
+    AgentAvailability,
     EmailMessageMapping,
     EmailOutboxMessage,
     GithubCommentMapping,
     TeamConversationsSlackConfig,
     TeamConversationsTeamsChannelSync,
     TeamConversationsTeamsConfig,
+    TicketAssignment,
 )
 from products.conversations.backend.models.constants import Channel, ChannelDetail, Status
 from products.conversations.backend.models.ticket import Ticket
 from products.conversations.backend.services.attachments import CONVERSATIONS_MAX_IMAGE_BYTES
+from products.conversations.backend.services.availability import is_available
 from products.conversations.backend.slack import (
     TICKET_CONFIRM_ACTION_DISMISS,
     TICKET_CONFIRM_ACTION_OPEN,
@@ -2095,3 +2099,172 @@ def create_github_issue(
 
     logger.info("github_issue_created", ticket_id=str(ticket.id), repo=repo, issue_number=issue_number)
     return {"ticket_id": str(ticket.id), "issue_number": issue_number}
+
+
+# ---------------------------------------------------------------------------
+# Agent availability
+# ---------------------------------------------------------------------------
+
+HAND_OFF_TICKETS_BATCH_SIZE = 50
+
+# Statuses where a ticket is still someone's job. Resolved tickets keep their assignee: it
+# records who dealt with the ticket, and reopening one is a deliberate act that can pick a new
+# assignee then.
+HANDOFF_TICKET_STATUSES = (Status.NEW, Status.OPEN, Status.PENDING, Status.ON_HOLD)
+
+
+def _log_ticket_handoff(ticket: Ticket, assignment_before: dict[str, Any], assignment_after: dict[str, Any] | None):
+    try:
+        log_activity(
+            organization_id=ticket.team.organization_id,
+            team_id=ticket.team_id,
+            user=None,  # system actor — the agent becoming unavailable, not a person editing this ticket
+            was_impersonated=False,
+            item_id=str(ticket.id),
+            scope="Ticket",
+            activity="assigned",
+            detail=Detail(
+                name=f"Ticket #{ticket.ticket_number}",
+                changes=[
+                    Change(
+                        type="Ticket",
+                        field="assignee",
+                        before=assignment_before,
+                        after=assignment_after,
+                        action="changed",
+                    )
+                ],
+            ),
+        )
+    except Exception:
+        logger.exception("ticket_handoff_activity_log_failed", ticket_id=str(ticket.id))
+
+
+@shared_task(ignore_result=True, max_retries=3, soft_time_limit=600, time_limit=660)
+@skip_team_scope_audit  # Ticket/TicketAssignment are on RootTeamManager; this walks one org's teams
+def hand_off_unavailable_agent_tickets(organization_id: str, user_id: int) -> None:
+    """Move an unavailable agent's active tickets to the group they nominated, in batches.
+
+    With no group nominated the assignee is cleared instead, putting the ticket back in the
+    unassigned queue. Either way nobody picks a substitute individual: the point is to get the
+    ticket in front of whoever is actually around.
+
+    Re-checks availability between batches so an agent who comes back mid-run keeps the rest of
+    their queue.
+    """
+
+    total = 0
+
+    while True:
+        if is_available(organization_id, user_id):
+            logger.info(
+                "ticket_handoff_stopped_agent_available",
+                organization_id=organization_id,
+                user_id=user_id,
+                handed_off=total,
+            )
+            return
+
+        ticket_ids = list(
+            TicketAssignment.objects.filter(
+                user_id=user_id,
+                ticket__team__organization_id=organization_id,
+                ticket__status__in=HANDOFF_TICKET_STATUSES,
+            )
+            .order_by("created_at")
+            .values_list("ticket_id", flat=True)[:HAND_OFF_TICKETS_BATCH_SIZE]
+        )
+        if not ticket_ids:
+            break
+
+        handed_off_in_batch = 0
+        for ticket_id in ticket_ids:
+            if _hand_off_one_ticket(ticket_id, user_id, organization_id):
+                handed_off_in_batch += 1
+
+        total += handed_off_in_batch
+        # Every row in the batch is still assigned to them, so re-reading it would return the same
+        # tickets forever. Retry the whole task later rather than spinning here, and rather than
+        # giving up: nothing else would ever come back for the rest of this agent's queue.
+        if handed_off_in_batch == 0:
+            logger.warning(
+                "ticket_handoff_made_no_progress",
+                organization_id=organization_id,
+                user_id=user_id,
+                batch_size=len(ticket_ids),
+                handed_off=total,
+            )
+            raise cast(Any, hand_off_unavailable_agent_tickets).retry(countdown=60)
+
+    if total:
+        logger.info(
+            "ticket_handoff_completed",
+            organization_id=organization_id,
+            user_id=user_id,
+            handed_off=total,
+        )
+
+
+def _handoff_role_id(organization_id: str, user_id: int) -> UUID | None:
+    """The group this agent's tickets should go to, if it still exists and still belongs to the org."""
+    availability = AgentAvailability.objects.filter(
+        organization_id=organization_id, user_id=user_id, handoff_role__organization_id=organization_id
+    ).first()
+    return availability.handoff_role_id if availability else None
+
+
+def _hand_off_one_ticket(ticket_id: UUID, user_id: int, organization_id: str) -> bool:
+    """Move one ticket off this agent. Returns whether anything actually changed."""
+
+    # Deferred to keep the API layer off the Celery import path, which posthog/tasks/scheduled.py
+    # pulls in at beat startup. Reusing the serializer is what keeps these timeline entries the
+    # same shape as the ones assign_ticket writes.
+    from products.conversations.backend.api.serializers import TicketAssignmentSerializer  # noqa: PLC0415
+
+    try:
+        with transaction.atomic():
+            # Lock the ticket, not the assignment row — that's what assign_ticket locks, so it's
+            # the only thing that serializes us against a teammate reassigning at the same moment.
+            ticket = Ticket.objects.select_for_update(of=("self",)).select_related("team").filter(id=ticket_id).first()
+            if ticket is None or ticket.status not in HANDOFF_TICKET_STATUSES:
+                return False
+
+            assignment = (
+                TicketAssignment.objects.select_related("user", "role")
+                .filter(ticket_id=ticket_id, user_id=user_id)
+                .first()
+            )
+            if assignment is None:
+                # Reassigned to someone else while we queued — that decision stands.
+                return False
+
+            # Resolved per ticket, inside the lock: read once up front, a group deleted mid-run
+            # would fail the FK on every remaining ticket and strand the agent's whole queue.
+            handoff_role_id = _handoff_role_id(organization_id, user_id)
+
+            assignment_before = TicketAssignmentSerializer(assignment).data
+            if handoff_role_id is None:
+                assignment.delete()
+                assignment_after = None
+            else:
+                assignment.user_id = None
+                assignment.role_id = handoff_role_id
+                assignment.save(update_fields=["user", "role"])
+                assignment_after = TicketAssignmentSerializer(assignment).data
+    except Exception:
+        logger.exception("ticket_handoff_failed", ticket_id=str(ticket_id), user_id=user_id)
+        return False
+
+    _log_ticket_handoff(ticket, assignment_before, assignment_after)
+    try:
+        capture_ticket_assigned(
+            ticket,
+            "role" if handoff_role_id else None,
+            str(handoff_role_id) if handoff_role_id else None,
+            actor=None,
+            actor_type="system",
+        )
+    except Exception as e:
+        capture_exception(e, {"ticket_id": str(ticket_id)})
+
+    return True

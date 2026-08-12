@@ -1,3 +1,4 @@
+from .agent_availability import AgentAvailability
 from .assignment import TicketAssignment
 from .constants import Channel, ChannelDetail, Priority, RuleType, Status
 from .email_message_mapping import EmailMessageMapping
@@ -15,6 +16,7 @@ from .ticket_view_favorite import TicketViewFavorite
 from .zendesk_import_job import ZendeskImportJob
 
 __all__ = [
+    "AgentAvailability",
     "Channel",
     "ChannelDetail",
     "ConversationRestoreToken",

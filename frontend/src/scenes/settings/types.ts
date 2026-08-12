@@ -113,6 +113,7 @@ export type SettingId =
     | 'channel-type'
     | 'connected-apps'
     | 'conversations-ai'
+    | 'conversations-availability'
     | 'conversations-channels'
     | 'conversations-general'
     | 'conversations-imports'

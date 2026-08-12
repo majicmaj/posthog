@@ -5,6 +5,7 @@ import { LemonButton, LemonInput } from '@posthog/lemon-ui'
 
 import { urls } from 'scenes/urls'
 
+import { agentAvailabilityLogic } from '../../agentAvailabilityLogic'
 import { AssigneeIconDisplay, AssigneeLabelDisplay } from './AssigneeDisplay'
 import { assigneeSelectLogic } from './assigneeSelectLogic'
 import { Assignee, TicketAssignee } from './types'
@@ -18,6 +19,7 @@ export function AssigneeDropdown({ assignee, onChange }: AssigneeDropdownProps):
     const { search, filteredRoles, otherFilteredMembers, currentUserMember, rolesLoading, membersLoading } =
         useValues(assigneeSelectLogic)
     const { setSearch } = useActions(assigneeSelectLogic)
+    const { unavailableUserIds } = useValues(agentAvailabilityLogic)
 
     return (
         <div className="max-w-100 deprecated-space-y-2">
@@ -48,7 +50,12 @@ export function AssigneeDropdown({ assignee, onChange }: AssigneeDropdownProps):
                             type="user"
                             onSelect={onChange}
                             activeId={assignee?.id}
-                            labelSuffix={<span className="text-secondary">(you)</span>}
+                            labelSuffix={
+                                <span className="text-secondary">
+                                    (you)
+                                    {unavailableUserIds.has(currentUserMember.user.id) && ' · Unavailable'}
+                                </span>
+                            }
                         />
                     </li>
                 )}
@@ -90,6 +97,7 @@ export function AssigneeDropdown({ assignee, onChange }: AssigneeDropdownProps):
                         }))}
                         onSelect={onChange}
                         activeId={assignee?.id}
+                        unavailableUserIds={unavailableUserIds}
                     />
                 )}
             </ul>
@@ -103,12 +111,14 @@ const AssigneeItem = ({
     onSelect,
     activeId,
     labelSuffix,
+    disabledReason,
 }: {
     item: Assignee
     type: 'user' | 'role'
     onSelect: (value: TicketAssignee) => void
     activeId?: string | number
     labelSuffix?: JSX.Element
+    disabledReason?: string
 }): JSX.Element => {
     return (
         <LemonButton
@@ -118,6 +128,7 @@ const AssigneeItem = ({
             icon={<AssigneeIconDisplay assignee={item} />}
             onClick={() => item?.id && onSelect(String(activeId) === String(item.id) ? null : { type, id: item.id })}
             active={String(activeId) === String(item?.id)}
+            disabledReason={disabledReason}
         >
             <span className="flex items-center gap-1">
                 <AssigneeLabelDisplay assignee={item} />
@@ -136,6 +147,7 @@ const Section = ({
     activeId,
     emptyState,
     title,
+    unavailableUserIds,
 }: {
     title: string
     loading: boolean
@@ -145,16 +157,30 @@ const Section = ({
     onSelect: (value: TicketAssignee) => void
     activeId?: string | number
     emptyState?: JSX.Element
+    /** Whose rows to mark and block. Roles are never blocked: a group is whoever in it responds. */
+    unavailableUserIds?: Set<number>
 }): JSX.Element => {
     return (
         <li>
             <section className="deprecated-space-y-px">
                 <h5 className="mx-2 my-0.5">{title}</h5>
-                {items.map((item) => (
-                    <li key={item?.id || 'unassigned'}>
-                        <AssigneeItem item={item} type={type} onSelect={onSelect} activeId={activeId} />
-                    </li>
-                ))}
+                {items.map((item) => {
+                    const isUnavailable = item?.type === 'user' && !!unavailableUserIds?.has(item.id as number)
+                    return (
+                        <li key={item?.id || 'unassigned'}>
+                            <AssigneeItem
+                                item={item}
+                                type={type}
+                                onSelect={onSelect}
+                                activeId={activeId}
+                                disabledReason={isUnavailable ? 'Unavailable for new tickets' : undefined}
+                                labelSuffix={
+                                    isUnavailable ? <span className="text-secondary">Unavailable</span> : undefined
+                                }
+                            />
+                        </li>
+                    )
+                })}
 
                 {loading ? (
                     <div className="p-2 text-secondary italic truncate border-t">Loading...</div>

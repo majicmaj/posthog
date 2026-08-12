@@ -8638,6 +8638,47 @@ export namespace Schemas {
       readonly window_days: number;
     }
 
+    /**
+     * The group an agent's tickets go to while they're unavailable.
+     */
+    export interface HandoffRole {
+      /** Role UUID. */
+      readonly id: string;
+      /** Role name as shown in organization settings. */
+      readonly name: string;
+    }
+
+    /**
+     * One agent's availability for support tickets.
+     */
+    export interface AgentAvailability {
+      /** The agent this availability belongs to. */
+      readonly user: UserBasic;
+      /** Whether the agent is currently taking tickets. */
+      readonly is_available: boolean;
+      /** The group this agent's open tickets are handed to when they become unavailable. Null leaves those tickets unassigned instead. */
+      readonly handoff_role: HandoffRole | null;
+      /** Who last changed it: the agent themselves, or an organization admin. Null if that account has since been deleted. */
+      readonly changed_by: UserBasic | null;
+      /** When it last changed. */
+      readonly updated_at: string;
+    }
+
+    /**
+     * One agent's availability after a change.
+     */
+    export interface AgentAvailabilityState {
+      /** The agent this state belongs to. */
+      readonly user_id: number;
+      /** Whether the agent is now taking tickets. */
+      readonly is_available: boolean;
+      /**
+         * The group their open tickets are handed to while unavailable, or null for unassigned.
+         * @nullable
+         */
+      readonly handoff_role_id: string | null;
+    }
+
     export type AgentKeyEnum = typeof AgentKeyEnum[keyof typeof AgentKeyEnum];
 
 
@@ -68916,6 +68957,19 @@ export namespace Schemas {
       product_context?: string;
       /** Team-defined tags layered on top of the fixed taxonomy, as a {name: description} map. Names must be lowercase snake_case (max 60 chars), descriptions max 200 chars, max 15 entries. */
       custom_tags?: SessionSummariesConfigCustomTags;
+    }
+
+    /**
+     * Payload for changing one agent's availability.
+     */
+    export interface SetAgentAvailability {
+      /** False takes the agent out of ticket assignment and hands their open tickets to handoff_role. True makes them assignable again. Tickets already handed off are not given back. */
+      is_available: boolean;
+      /**
+         * UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time.
+         * @nullable
+         */
+      handoff_role_id?: string | null;
     }
 
     export interface SetAllServersEnabled {

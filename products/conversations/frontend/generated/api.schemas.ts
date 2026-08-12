@@ -8,44 +8,6 @@
  * OpenAPI spec version: 1.0.0
  */
 /**
- * * `idle` - Idle
- * * `in_progress` - In progress
- * * `canceling` - Canceling
- */
-export type ConversationStatusApi = (typeof ConversationStatusApi)[keyof typeof ConversationStatusApi]
-
-export const ConversationStatusApi = {
-    Idle: 'idle',
-    InProgress: 'in_progress',
-    Canceling: 'canceling',
-} as const
-
-/**
- * * `web_analytics` - Web analytics
- * * `product_analytics` - Product analytics
- * * `session_replay` - Session replay
- * * `surveys` - Surveys
- * * `feature_flags` - Feature flags
- * * `experiments` - Experiments
- * * `error_tracking` - Error tracking
- * * `data_warehouse` - Data warehouse
- * * `other` - Other
- */
-export type TopicEnumApi = (typeof TopicEnumApi)[keyof typeof TopicEnumApi]
-
-export const TopicEnumApi = {
-    WebAnalytics: 'web_analytics',
-    ProductAnalytics: 'product_analytics',
-    SessionReplay: 'session_replay',
-    Surveys: 'surveys',
-    FeatureFlags: 'feature_flags',
-    Experiments: 'experiments',
-    ErrorTracking: 'error_tracking',
-    DataWarehouse: 'data_warehouse',
-    Other: 'other',
-} as const
-
-/**
  * * `engineering` - Engineering
  * * `data` - Data
  * * `product` - Product Management
@@ -101,6 +63,98 @@ export interface UserBasicApi {
     readonly hedgehog_config: UserBasicApiHedgehogConfig
     role_at_organization?: RoleAtOrganizationEnumApi | BlankEnumApi | null
 }
+
+/**
+ * The group an agent's tickets go to while they're unavailable.
+ */
+export interface HandoffRoleApi {
+    /** Role UUID. */
+    readonly id: string
+    /** Role name as shown in organization settings. */
+    readonly name: string
+}
+
+/**
+ * One agent's availability for support tickets.
+ */
+export interface AgentAvailabilityApi {
+    /** The agent this availability belongs to. */
+    readonly user: UserBasicApi
+    /** Whether the agent is currently taking tickets. */
+    readonly is_available: boolean
+    /** The group this agent's open tickets are handed to when they become unavailable. Null leaves those tickets unassigned instead. */
+    readonly handoff_role: HandoffRoleApi | null
+    /** Who last changed it: the agent themselves, or an organization admin. Null if that account has since been deleted. */
+    readonly changed_by: UserBasicApi | null
+    /** When it last changed. */
+    readonly updated_at: string
+}
+
+/**
+ * Payload for changing one agent's availability.
+ */
+export interface SetAgentAvailabilityApi {
+    /** False takes the agent out of ticket assignment and hands their open tickets to handoff_role. True makes them assignable again. Tickets already handed off are not given back. */
+    is_available: boolean
+    /**
+     * UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time.
+     * @nullable
+     */
+    handoff_role_id?: string | null
+}
+
+/**
+ * One agent's availability after a change.
+ */
+export interface AgentAvailabilityStateApi {
+    /** The agent this state belongs to. */
+    readonly user_id: number
+    /** Whether the agent is now taking tickets. */
+    readonly is_available: boolean
+    /**
+     * The group their open tickets are handed to while unavailable, or null for unassigned.
+     * @nullable
+     */
+    readonly handoff_role_id: string | null
+}
+
+/**
+ * * `idle` - Idle
+ * * `in_progress` - In progress
+ * * `canceling` - Canceling
+ */
+export type ConversationStatusApi = (typeof ConversationStatusApi)[keyof typeof ConversationStatusApi]
+
+export const ConversationStatusApi = {
+    Idle: 'idle',
+    InProgress: 'in_progress',
+    Canceling: 'canceling',
+} as const
+
+/**
+ * * `web_analytics` - Web analytics
+ * * `product_analytics` - Product analytics
+ * * `session_replay` - Session replay
+ * * `surveys` - Surveys
+ * * `feature_flags` - Feature flags
+ * * `experiments` - Experiments
+ * * `error_tracking` - Error tracking
+ * * `data_warehouse` - Data warehouse
+ * * `other` - Other
+ */
+export type TopicEnumApi = (typeof TopicEnumApi)[keyof typeof TopicEnumApi]
+
+export const TopicEnumApi = {
+    WebAnalytics: 'web_analytics',
+    ProductAnalytics: 'product_analytics',
+    SessionReplay: 'session_replay',
+    Surveys: 'surveys',
+    FeatureFlags: 'feature_flags',
+    Experiments: 'experiments',
+    ErrorTracking: 'error_tracking',
+    DataWarehouse: 'data_warehouse',
+    Other: 'other',
+} as const
 
 /**
  * * `assistant` - Assistant

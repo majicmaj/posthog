@@ -9,6 +9,22 @@
  */
 import * as zod from 'zod'
 
+export const ConversationsAvailabilityUpdateBody = /* @__PURE__ */ zod
+    .object({
+        is_available: zod
+            .boolean()
+            .describe(
+                'False takes the agent out of ticket assignment and hands their open tickets to handoff_role. True makes them assignable again. Tickets already handed off are not given back.'
+            ),
+        handoff_role_id: zod
+            .uuid()
+            .nullish()
+            .describe(
+                "UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time."
+            ),
+    })
+    .describe("Payload for changing one agent's availability.")
+
 /**
  * Unified endpoint that handles both conversation creation and streaming.
  *
