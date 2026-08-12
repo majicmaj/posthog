@@ -32,7 +32,6 @@ from products.customer_analytics.backend.facade.api import (
     AccountEmailThreadMessage,
     AccountEmailThreadSummary,
     EmailThreadAddress,
-    EmailThreadOwnerSummary,
     EmailThreadParticipantSummary,
     TicketSummary,
 )
@@ -512,17 +511,6 @@ class EmailThreadParticipantSerializer(DataclassSerializer):
         fields = ["email", "display_name", "kind"]
 
 
-class EmailThreadOwnerSerializer(DataclassSerializer):
-    user_id = serializers.IntegerField(read_only=True, help_text="User ID of the channel owner.")
-    name = serializers.CharField(read_only=True, help_text="Display name of the channel owner.")
-    email = serializers.EmailField(read_only=True, help_text="Email address of the channel owner.")
-
-    class Meta:
-        dataclass = EmailThreadOwnerSummary
-        ref_name = "AccountEmailThreadOwner"
-        fields = ["user_id", "name", "email"]
-
-
 class AccountEmailThreadSerializer(DataclassSerializer):
     id = serializers.UUIDField(read_only=True, help_text="UUID of the captured email thread.")
     subject = serializers.CharField(read_only=True, allow_blank=True, help_text="Email thread subject.")
@@ -550,11 +538,6 @@ class AccountEmailThreadSerializer(DataclassSerializer):
         read_only=True,
         help_text="Participants included in the email thread.",
     )
-    owners = EmailThreadOwnerSerializer(
-        many=True,
-        read_only=True,
-        help_text="Customer communication channel owners who can access the thread.",
-    )
 
     class Meta:
         dataclass = AccountEmailThreadSummary
@@ -567,7 +550,6 @@ class AccountEmailThreadSerializer(DataclassSerializer):
             "last_message_at",
             "message_count",
             "participants",
-            "owners",
         ]
 
 
