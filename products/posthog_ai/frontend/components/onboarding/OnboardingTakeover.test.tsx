@@ -34,10 +34,11 @@ describe('OnboardingTakeover', () => {
         expect(screen.getByText('What changed this week?')).toBeInTheDocument()
     })
 
-    // The manifest ships with no media so the modal can merge before the clips are recorded. Rendering a
-    // <video> with an undefined src would show alpha users a broken player instead of a text-only step.
-    it('renders no video until a step has a recorded clip', () => {
-        const { container } = render(
+    // The manifest ships with no media so the dialog can merge before the clips are recorded. A <video> with
+    // an undefined src would show alpha users a broken player, and dropping the panel entirely would resize
+    // the dialog the day a clip lands.
+    it('holds the media panel with the step glyph until a clip is recorded', () => {
+        render(
             <OnboardingTakeover
                 open
                 steps={DEFAULT_ONBOARDING_STEPS}
@@ -48,7 +49,8 @@ describe('OnboardingTakeover', () => {
             />
         )
 
-        expect(container.ownerDocument.querySelector('video')).toBeNull()
+        expect(document.querySelector('video')).toBeNull()
+        expect(document.querySelector('.aspect-video')).not.toBeNull()
 
         cleanup()
 

@@ -80,11 +80,19 @@ const STEP_WITH_MEDIA: OnboardingStep = {
 }
 
 /**
- * A step once its clip has been recorded. The manifest ships without media, so every other story exercises
- * the text-only path this one is contrasted against.
+ * A step once its clip has been recorded. The clip occupies exactly the box the glyph held, so nothing in
+ * the dialog moves when a recording lands.
  */
 export const WithMedia: Story = {
     args: { steps: [STEP_WITH_MEDIA], stepIndex: 0 },
     // The clip loops indefinitely, so the visual-regression runner would wait forever for it to settle.
     tags: ['test-skip'],
+}
+
+/** Every step before its clip exists: the media panel holds the step's own glyph. This is what ships today. */
+export const AwaitingClip: Story = {
+    args: {
+        steps: DEFAULT_ONBOARDING_STEPS,
+        stepIndex: DEFAULT_ONBOARDING_STEPS.findIndex((step) => step.key === 'delegate'),
+    },
 }

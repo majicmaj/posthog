@@ -1,3 +1,5 @@
+import { IconBolt, IconBook, IconGithub, IconList, IconMessage, IconSparkles } from '@posthog/icons'
+
 // Default, overridable content for the PostHog AI onboarding takeover. Six steps, in order: reset the
 // user's prediction of the old assistant, then one step per capability, ending on a real prompt. Pass your
 // own array to override.
@@ -18,10 +20,12 @@ export interface OnboardingStep {
     eyebrow: string
     headline: string
     body: string
+    /** Stands in for the clip until one is recorded, and gives each step a face of its own either way. */
+    icon: JSX.Element
     /**
-     * Absent until the clip is recorded, in which case the step renders as text only rather than showing a
-     * placeholder. Add `{ src: '/static/posthog-ai-onboarding/<key>.mp4', poster: '…jpg' }` once each clip
-     * lands in `frontend/public/posthog-ai-onboarding/`.
+     * Absent until the clip is recorded, in which case the step's media panel shows `icon` instead. Add
+     * `{ src: '/static/posthog-ai-onboarding/<key>.mp4', poster: '…jpg' }` once each clip lands in
+     * `frontend/public/posthog-ai-onboarding/`.
      */
     media?: OnboardingStepMediaSpec
 }
@@ -29,24 +33,28 @@ export interface OnboardingStep {
 export const DEFAULT_ONBOARDING_STEPS: readonly OnboardingStep[] = [
     {
         key: 'meet',
+        icon: <IconSparkles />,
         eyebrow: 'Meet the new PostHog AI',
         headline: 'PostHog AI is a different product now',
         body: 'It is a coding agent running in its own sandbox, the same agent behind PostHog Code and our Slack app. It plans before it acts, shows the query behind every answer, and keeps working after you close the tab.',
     },
     {
         key: 'ask',
+        icon: <IconMessage />,
         eyebrow: 'Ask',
         headline: 'Ask in plain language and see the query it ran',
         body: 'Ask about signups, conversion, retention, or anything else in your data, and get the insight back with the query it ran in the open. It covers every PostHog product now, up from 7 in the previous version.',
     },
     {
         key: 'delegate',
+        icon: <IconList />,
         eyebrow: 'Delegate',
         headline: 'Hand it real work',
         body: 'Give it a job with more than one step, like auditing your event tracking or fixing the bug behind an error spike. It writes a plan, you approve it, and it works in the background while results land in your inbox.',
     },
     {
         key: 'skills',
+        icon: <IconBook />,
         eyebrow: 'Skills',
         headline: 'Teach it how your team works',
         body: 'Skills are reusable instructions the agent follows every time: your metric definitions, naming conventions, the weekly report format. Create them in PostHog, or keep them in your repo so they stay versioned and reviewable.',
@@ -55,12 +63,14 @@ export const DEFAULT_ONBOARDING_STEPS: readonly OnboardingStep[] = [
     // those prompts ends in a pull request when GitHub is connected.
     {
         key: 'connect',
+        icon: <IconGithub />,
         eyebrow: 'Connect',
         headline: 'Connect GitHub, so it can read how your events actually fire',
         body: 'With GitHub connected it grounds answers in what your product really does, reviews and fixes your PostHog instrumentation, and opens any change it recommends as a pull request. If you already use PostHog Code, you are most likely set up.',
     },
     {
         key: 'start',
+        icon: <IconBolt />,
         eyebrow: 'Start',
         headline: 'Start with something real',
         body: 'The same agent is in this chat, in Slack, in PostHog Code, and behind the MCP. Pick a question below and it will start right away.',

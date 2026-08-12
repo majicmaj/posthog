@@ -19,9 +19,9 @@ import { cn } from 'lib/utils/css-classes'
 import { OnboardingStepMedia } from './OnboardingStepMedia'
 import type { OnboardingStep, OnboardingStepKey } from './onboardingSteps'
 
-// Logic-free onboarding takeover: a full-screen dialog that walks one step at a time. The caller owns the
-// step index, what "dismiss" persists, and the interactive blocks for the steps that need live state (the
-// GitHub CTA on CONNECT, the starter prompts on START) — this component only presents.
+// Logic-free onboarding dialog that walks one step at a time. The caller owns the step index, what
+// "dismiss" persists, and the interactive blocks for the steps that need live state (the GitHub CTA on
+// CONNECT, the starter prompts on START) — this component only presents.
 
 export interface OnboardingTakeoverProps {
     open: boolean
@@ -80,11 +80,17 @@ export function OnboardingTakeover({
                 data-attr="posthog-ai-onboarding"
                 aria-label="What's new in PostHog AI"
             >
-                {/* One centered column rather than a header/body split: on a full-screen surface a pinned
-                    header leaves the copy stranded at the top above a large void, and a step without its
-                    clip yet would look unfinished. */}
-                <DialogBody viewportClassName="flex flex-col justify-center">
-                    <div className="PhaiOnboardingTakeover__step mx-auto flex w-full flex-col gap-4">
+                {/* No DialogHeader: the media panel leads, so the eyebrow and headline sit below it inside
+                    the body rather than in a pinned row above. */}
+                <DialogBody>
+                    <div className="flex w-full flex-col gap-4">
+                        <OnboardingStepMedia
+                            media={step.media}
+                            icon={step.icon}
+                            active={open}
+                            label={step.headline}
+                            onReplay={onReplayMedia ? () => onReplayMedia(step) : undefined}
+                        />
                         <div className="flex flex-col gap-1">
                             <Text
                                 render={<span />}
@@ -95,25 +101,20 @@ export function OnboardingTakeover({
                             >
                                 {step.eyebrow}
                             </Text>
-                            <DialogTitle render={<Heading size="xl" />}>{step.headline}</DialogTitle>
+                            <DialogTitle render={<Heading size="lg" />}>{step.headline}</DialogTitle>
                         </div>
-                        {step.media && (
-                            <OnboardingStepMedia
-                                media={step.media}
-                                active={open}
-                                label={step.headline}
-                                onReplay={onReplayMedia ? () => onReplayMedia(step) : undefined}
-                            />
-                        )}
-                        <Text variant="muted">{step.body}</Text>
+                        <Text size="sm" variant="muted">
+                            {step.body}
+                        </Text>
                         {stepActions?.[step.key]}
                     </div>
                 </DialogBody>
 
-                {/* Quill's footer stacks below `sm`, which on a narrow viewport puts the step dots above the
-                    controls in reverse order. This bar is three small items, so keep it a row throughout. */}
-                <DialogFooter className="flex-row items-center justify-between sm:justify-between">
-                    <div className="flex items-center gap-2">
+                {/* A three-column grid, not `justify-between`: the left group is wider than the right, so
+                    space-between would push the step dots off the dialog's centerline. Also keeps the bar a
+                    single row, where quill's footer would stack it in reverse order below `sm`. */}
+                <DialogFooter className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                    <div className="flex items-center gap-2 justify-self-start">
                         <Button
                             variant="outline"
                             size="sm"
@@ -154,14 +155,20 @@ export function OnboardingTakeover({
                         ))}
                     </div>
 
-                    {/* The last step's action block carries the call to action, so there's no Next to show. */}
-                    {isLastStep ? (
-                        <div aria-hidden className="hidden sm:block sm:w-24" />
-                    ) : (
-                        <Button variant="primary" size="sm" onClick={handleNext} data-attr="posthog-ai-onboarding-next">
-                            Next
-                        </Button>
-                    )}
+                    {/* The last step's action block carries the call to action, so there's no Next to show.
+                        The grid cell stays either way, so the dots do not shift on the final step. */}
+                    <div className="justify-self-end">
+                        {!isLastStep && (
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={handleNext}
+                                data-attr="posthog-ai-onboarding-next"
+                            >
+                                Next
+                            </Button>
+                        )}
+                    </div>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
