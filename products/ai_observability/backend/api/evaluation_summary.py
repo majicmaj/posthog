@@ -375,6 +375,8 @@ Data is fetched server-side by evaluation ID to ensure data integrity.
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
+            self.check_object_permissions(request, evaluation)
+
             # Fetch evaluation runs from ClickHouse using HogQL
             runs = _fetch_evaluation_runs(
                 team=self.team,

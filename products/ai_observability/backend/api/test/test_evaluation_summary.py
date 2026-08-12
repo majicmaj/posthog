@@ -9,6 +9,10 @@ from unittest.mock import MagicMock, patch
 
 from rest_framework import exceptions, status
 
+from posthog.constants import AvailableFeature
+from posthog.models.organization import OrganizationMembership
+from posthog.models.user import User
+
 from products.ai_observability.backend.models.evaluations import Evaluation
 from products.ai_observability.backend.summarization.constants import EVALUATION_SUMMARY_MAX_RUNS
 from products.ai_observability.backend.summarization.llm.evaluation_schema import (
@@ -16,6 +20,8 @@ from products.ai_observability.backend.summarization.llm.evaluation_schema impor
     EvaluationSummaryResponse,
     EvaluationSummaryStatistics,
 )
+
+from ee.models.rbac.access_control import AccessControl
 
 
 class TestEvaluationSummaryAPI(APIBaseTest):
@@ -40,6 +46,35 @@ class TestEvaluationSummaryAPI(APIBaseTest):
         self.client.logout()
         response = self.client.post(f"/api/environments/{self.team.id}/llm_analytics/evaluation_summary/")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_summary_requires_access_to_requested_evaluation(self):
+        self.organization.is_ai_data_processing_approved = True
+        self.organization.available_product_features = [
+            {"key": AvailableFeature.ACCESS_CONTROL, "name": AvailableFeature.ACCESS_CONTROL},
+            {"key": AvailableFeature.ROLE_BASED_ACCESS, "name": AvailableFeature.ROLE_BASED_ACCESS},
+        ]
+        self.organization.save()
+        other_user = User.objects.create_and_join(self.organization, "summary-viewer@posthog.com", "testtest")
+        membership = OrganizationMembership.objects.get(user=other_user, organization=self.organization)
+        AccessControl.objects.create(
+            team=self.team, resource="evaluation", access_level="editor", organization_member=membership
+        )
+        AccessControl.objects.create(
+            team=self.team,
+            resource="evaluation",
+            resource_id=str(self.evaluation.id),
+            access_level="none",
+            organization_member=membership,
+        )
+        self.client.force_login(other_user)
+
+        response = self.client.post(
+            f"/api/environments/{self.team.id}/llm_analytics/evaluation_summary/",
+            {"evaluation_id": str(self.evaluation.id), "filter": "all"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_ai_consent_required(self):
         self.organization.is_ai_data_processing_approved = False
