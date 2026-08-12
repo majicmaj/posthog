@@ -92,11 +92,11 @@ posthog-code://task/abc123/run/xyz789
 
 ### `posthog-code://inbox/<reportId>`
 
-Open a specific inbox report.
+Open a report canvas in the space that contains reports.
 
 | Segment | Required | Description |
 |---|---|---|
-| `<reportId>` | Yes | Inbox report ID |
+| `<reportId>` | Yes | Report ID |
 
 ```
 posthog-code://inbox/report_abc123
