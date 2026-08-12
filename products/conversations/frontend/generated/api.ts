@@ -75,13 +75,13 @@ export const conversationsAvailabilityList = async (
     })
 }
 
-export const getConversationsAvailabilityUpdateUrl = (organizationId: string, id: string) => {
+export const getConversationsAvailabilityUpdateUrl = (organizationId: string, id: number) => {
     return `/api/organizations/${organizationId}/conversations/availability/${id}/`
 }
 
 export const conversationsAvailabilityUpdate = async (
     organizationId: string,
-    id: string,
+    id: number,
     setAgentAvailabilityApi: SetAgentAvailabilityApi,
     options?: RequestInit
 ): Promise<AgentAvailabilityStateApi> => {

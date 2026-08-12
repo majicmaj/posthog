@@ -129,7 +129,7 @@ export const agentAvailabilityLogic = kea<agentAvailabilityLogicType>([
                     if (!organizationId) {
                         return values.availability
                     }
-                    await conversationsAvailabilityUpdate(organizationId, String(payload.userId), {
+                    await conversationsAvailabilityUpdate(organizationId, payload.userId, {
                         is_available: payload.isAvailable,
                         ...(payload.handoffRoleId !== undefined ? { handoff_role_id: payload.handoffRoleId } : {}),
                     })

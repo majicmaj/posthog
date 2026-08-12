@@ -1,0 +1,26 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+        "handoff_role_id": {
+            "anyOf": [
+                {
+                    "type": "string"
+                },
+                {
+                    "type": "null"
+                }
+            ],
+            "description": "UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time, and omitting it leaves the stored group as it is."
+        },
+        "id": {
+            "description": "Numeric user id of the agent whose availability is being set.",
+            "type": "number"
+        },
+        "is_available": {
+            "description": "False takes the agent out of ticket assignment and hands their open tickets to handoff_role. True makes them assignable again. Tickets already handed off are not given back.",
+            "type": "boolean"
+        }
+    },
+    "required": ["id", "is_available"],
+    "type": "object"
+}

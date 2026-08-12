@@ -2165,33 +2165,36 @@ def hand_off_unavailable_agent_tickets(organization_id: str, user_id: int) -> No
             )
             return
 
-        ticket_ids = list(
+        # The team comes back with the ticket so the per-ticket lock can scope to it, rather than
+        # trusting an id on its own to still belong to this organization.
+        batch = list(
             TicketAssignment.objects.filter(
                 user_id=user_id,
                 ticket__team__organization_id=organization_id,
                 ticket__status__in=HANDOFF_TICKET_STATUSES,
             )
             .order_by("created_at")
-            .values_list("ticket_id", flat=True)[:HAND_OFF_TICKETS_BATCH_SIZE]
+            .values_list("ticket_id", "ticket__team_id")[:HAND_OFF_TICKETS_BATCH_SIZE]
         )
-        if not ticket_ids:
+        if not batch:
             break
 
         handed_off_in_batch = 0
-        for ticket_id in ticket_ids:
-            if _hand_off_one_ticket(ticket_id, user_id, organization_id):
+        for ticket_id, team_id in batch:
+            if _hand_off_one_ticket(ticket_id, team_id, user_id, organization_id):
                 handed_off_in_batch += 1
 
         total += handed_off_in_batch
         # Every row in the batch is still assigned to them, so re-reading it would return the same
-        # tickets forever. Retry the whole task later rather than spinning here, and rather than
-        # giving up: nothing else would ever come back for the rest of this agent's queue.
+        # tickets forever. Retry the whole task later rather than spinning here. Retries are
+        # bounded, so a batch that keeps failing eventually stops and leaves the warning below as
+        # the record that this agent still holds tickets.
         if handed_off_in_batch == 0:
             logger.warning(
                 "ticket_handoff_made_no_progress",
                 organization_id=organization_id,
                 user_id=user_id,
-                batch_size=len(ticket_ids),
+                batch_size=len(batch),
                 handed_off=total,
             )
             raise cast(Any, hand_off_unavailable_agent_tickets).retry(countdown=60)
@@ -2213,7 +2216,7 @@ def _handoff_role_id(organization_id: str, user_id: int) -> UUID | None:
     return availability.handoff_role_id if availability else None
 
 
-def _hand_off_one_ticket(ticket_id: UUID, user_id: int, organization_id: str) -> bool:
+def _hand_off_one_ticket(ticket_id: UUID, team_id: int, user_id: int, organization_id: str) -> bool:
     """Move one ticket off this agent. Returns whether anything actually changed."""
 
     # Deferred to keep the API layer off the Celery import path, which posthog/tasks/scheduled.py
@@ -2225,7 +2228,12 @@ def _hand_off_one_ticket(ticket_id: UUID, user_id: int, organization_id: str) ->
         with transaction.atomic():
             # Lock the ticket, not the assignment row — that's what assign_ticket locks, so it's
             # the only thing that serializes us against a teammate reassigning at the same moment.
-            ticket = Ticket.objects.select_for_update(of=("self",)).select_related("team").filter(id=ticket_id).first()
+            ticket = (
+                Ticket.objects.select_for_update(of=("self",))
+                .select_related("team")
+                .filter(id=ticket_id, team_id=team_id)
+                .first()
+            )
             if ticket is None or ticket.status not in HANDOFF_TICKET_STATUSES:
                 return False
 
@@ -2263,6 +2271,7 @@ def _hand_off_one_ticket(ticket_id: UUID, user_id: int, organization_id: str) ->
             str(handoff_role_id) if handoff_role_id else None,
             actor=None,
             actor_type="system",
+            previous_assignee=assignment_before,
         )
     except Exception as e:
         capture_exception(e, {"ticket_id": str(ticket_id)})

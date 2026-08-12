@@ -13,9 +13,15 @@ import { Assignee, TicketAssignee } from './types'
 export interface AssigneeDropdownProps {
     assignee: TicketAssignee
     onChange: (assignee: TicketAssignee) => void
+    /**
+     * Whether picking an unavailable person is blocked. True when assigning a ticket now, which is
+     * what the API rejects. False where the choice is a durable rule rather than a live assignment,
+     * such as a workflow action: the API exempts automations, so the picker has to as well.
+     */
+    blockUnavailable?: boolean
 }
 
-export function AssigneeDropdown({ assignee, onChange }: AssigneeDropdownProps): JSX.Element {
+export function AssigneeDropdown({ assignee, onChange, blockUnavailable = true }: AssigneeDropdownProps): JSX.Element {
     const { search, filteredRoles, otherFilteredMembers, currentUserMember, rolesLoading, membersLoading } =
         useValues(assigneeSelectLogic)
     const { setSearch } = useActions(assigneeSelectLogic)
@@ -98,6 +104,7 @@ export function AssigneeDropdown({ assignee, onChange }: AssigneeDropdownProps):
                         onSelect={onChange}
                         activeId={assignee?.id}
                         unavailableUserIds={unavailableUserIds}
+                        blockUnavailable={blockUnavailable}
                     />
                 )}
             </ul>
@@ -148,6 +155,7 @@ const Section = ({
     emptyState,
     title,
     unavailableUserIds,
+    blockUnavailable,
 }: {
     title: string
     loading: boolean
@@ -157,8 +165,9 @@ const Section = ({
     onSelect: (value: TicketAssignee) => void
     activeId?: string | number
     emptyState?: JSX.Element
-    /** Whose rows to mark and block. Roles are never blocked: a group is whoever in it responds. */
+    /** Whose rows to mark. Roles are never marked: a group is whoever in it responds. */
     unavailableUserIds?: Set<number>
+    blockUnavailable?: boolean
 }): JSX.Element => {
     return (
         <li>
@@ -173,7 +182,9 @@ const Section = ({
                                 type={type}
                                 onSelect={onSelect}
                                 activeId={activeId}
-                                disabledReason={isUnavailable ? 'Unavailable for new tickets' : undefined}
+                                disabledReason={
+                                    isUnavailable && blockUnavailable ? 'Unavailable for new tickets' : undefined
+                                }
                                 labelSuffix={
                                     isUnavailable ? <span className="text-secondary">Unavailable</span> : undefined
                                 }

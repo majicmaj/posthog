@@ -499,17 +499,49 @@ def capture_ticket_priority_changed(
     )
 
 
+def _previous_assignee_properties(previous_assignee: dict | None) -> dict:
+    """Flatten a serialized TicketAssignment into event properties.
+
+    Read off the already-serialized assignment rather than looked up, so recording where a ticket
+    came from costs no extra query.
+    """
+    if not previous_assignee:
+        return {
+            "previous_assignee_type": None,
+            "previous_assignee_id": None,
+            "previous_assignee_email": None,
+            "previous_assignee_role_name": None,
+        }
+    previous_assignee_id = previous_assignee.get("id")
+    return {
+        "previous_assignee_type": previous_assignee.get("type"),
+        # Stringified to match assignee_id on the same event: a user assignment serializes its id
+        # as an int, and a filter written for one side has to work on the other.
+        "previous_assignee_id": str(previous_assignee_id) if previous_assignee_id is not None else None,
+        "previous_assignee_email": (previous_assignee.get("user") or {}).get("email"),
+        "previous_assignee_role_name": (previous_assignee.get("role") or {}).get("name"),
+    }
+
+
 def capture_ticket_assigned(
     ticket: Ticket,
     assignee_type: str | None,
     assignee_id: str | None,
     actor: User | None = None,
     actor_type: ActorType = "system",
+    previous_assignee: dict | None = None,
 ) -> None:
+    """Record an assignment change.
+
+    ``previous_assignee`` is the serialized assignment the ticket had before, which is what makes
+    "the tickets taken off me" answerable: without it an event says where a ticket went but not
+    where it came from.
+    """
     properties = _get_ticket_base_properties(ticket)
     properties["assignee_type"] = assignee_type
     properties["assignee_id"] = assignee_id
     properties["assignee_role_name"] = _role_name_for_assignee(ticket, assignee_type, assignee_id)
+    properties.update(_previous_assignee_properties(previous_assignee))
     properties.update(_get_actor_properties(actor, actor_type))
     properties.update(_get_customer_properties(ticket, include_distinct_id=True))
 

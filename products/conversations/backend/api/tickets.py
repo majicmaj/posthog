@@ -1700,6 +1700,13 @@ def assign_ticket(
             else:
                 assignee_type = None
                 assignee_id = None
-            capture_ticket_assigned(ticket, assignee_type, assignee_id, actor=user, actor_type="user")
+            capture_ticket_assigned(
+                ticket,
+                assignee_type,
+                assignee_id,
+                actor=user,
+                actor_type="user",
+                previous_assignee=serialized_assignment_before,
+            )
         except Exception as e:
             capture_exception(e, {"ticket_id": str(ticket.id)})

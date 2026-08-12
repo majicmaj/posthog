@@ -122,6 +122,12 @@ class TestAgentAvailabilityAPI(APIBaseTest):
             self.role,
         )
 
+    def test_an_out_of_range_user_id_is_not_found(self):
+        # Python ints are unbounded, so an oversized id used to reach Postgres and raise DataError.
+        response = self.client.put(f"{self.url}99999999999999999999/", {"is_available": False})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_list_does_not_leak_other_organizations(self):
         other_org = Organization.objects.create(name="Other org")
         other_org.members.add(self.user)

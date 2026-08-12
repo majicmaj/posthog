@@ -11,10 +11,36 @@ ui_apps: {}
 tools:
     conversations-availability-list:
         operation: conversations_availability_list
-        enabled: false
+        enabled: true
+        scopes:
+            - ticket:read
+        annotations:
+            readOnly: true
+            destructive: false
+            idempotent: true
+        list: true
+        title: List support agent availability
+        description: >
+            List the support agents in the organization who have set their availability, and the group each one hands
+            their open tickets to while unavailable. Agents with no entry are available; absence from this list is not
+            an error. Use this before assigning a ticket, because assigning to an unavailable agent is rejected.
     conversations-availability-update:
         operation: conversations_availability_update
-        enabled: false
+        enabled: true
+        scopes:
+            - ticket:write
+        annotations:
+            readOnly: false
+            destructive: true
+            idempotent: true
+        title: Set support agent availability
+        description: >
+            Set whether a support agent is taking tickets. The id is the agent's numeric user id. WARNING: setting
+            is_available=false hands that agent's active tickets (new, open, pending, on hold) to their handoff group in
+            the background, or leaves them unassigned when no group is set. This is not reversible: setting
+            is_available=true again only makes them assignable, it does not take the tickets back. Resolved tickets keep
+            their assignee. You can only change your own availability unless you are an organization admin. Omit
+            handoff_role_id to leave the stored group as it is; role ids come from the organization's roles.
     conversations-tickets-ai-feedback-create:
         operation: conversations_tickets_ai_feedback_create
         enabled: false

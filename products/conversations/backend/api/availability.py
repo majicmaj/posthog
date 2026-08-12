@@ -6,7 +6,7 @@ membership, so availability applies to every project in the org.
 
 from typing import cast
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import exceptions, serializers, viewsets
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -111,6 +111,9 @@ class AgentAvailabilityViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
     # Rows only exist for agents who have changed their availability, which stays small next to
     # the member list the client already holds.
     pagination_class = None
+    # Addressed by the agent's user id, not the availability row's own UUID: callers know who they
+    # mean, and a row only exists once someone has changed their availability.
+    lookup_value_regex = r"[0-9]+"
 
     def safely_get_queryset(self, queryset):
         return queryset.filter(organization=self.organization).select_related("user", "handoff_role", "changed_by")
@@ -123,6 +126,14 @@ class AgentAvailabilityViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
     # PUT rather than PATCH: the body fully describes the state, and a partial variant would make
     # both fields optional in the generated clients when they're the only things being set.
     @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="id",
+                type=int,
+                location=OpenApiParameter.PATH,
+                description="Numeric user id of the agent whose availability is being set.",
+            )
+        ],
         request=SetAgentAvailabilitySerializer,
         responses={200: AgentAvailabilityStateSerializer},
     )
@@ -145,6 +156,9 @@ class AgentAvailabilityViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
             is_available=is_available,
             handoff_role_id=handoff_role_id,
         )
+        # Read back rather than reported from the request: the request may have omitted the group,
+        # which means "leave it", so only the stored value says what is actually in force.
+        stored_handoff_role_id = self._stored_handoff_role_id(target_user_id)
         if changed:
             report_user_action(
                 actor,
@@ -152,7 +166,7 @@ class AgentAvailabilityViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
                 {
                     "is_available": is_available,
                     "is_self": actor.id == target_user_id,
-                    "has_handoff_role": handoff_role_id is not None,
+                    "has_handoff_role": stored_handoff_role_id is not None,
                 },
                 organization=self.organization,
                 request=request,
@@ -163,7 +177,7 @@ class AgentAvailabilityViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
                 {
                     "user_id": target_user_id,
                     "is_available": is_available,
-                    "handoff_role_id": self._stored_handoff_role_id(target_user_id),
+                    "handoff_role_id": stored_handoff_role_id,
                 }
             ).data
         )
@@ -172,6 +186,10 @@ class AgentAvailabilityViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSet):
         try:
             target_user_id = int(pk or "")
         except ValueError:
+            raise exceptions.NotFound("Person not found.")
+        # Python ints are unbounded but the column is a bigint, so an oversized id would reach
+        # Postgres and raise DataError instead of answering "no such person".
+        if not -(2**63) <= target_user_id < 2**63:
             raise exceptions.NotFound("Person not found.")
 
         if not OrganizationMembership.objects.filter(organization=self.organization, user_id=target_user_id).exists():

@@ -31,7 +31,9 @@ export default function CyclotronJobInputAssignee({ value, onChange }: CustomInp
             visible={showPopover}
             matchWidth={false}
             onVisibilityChange={(visible) => setShowPopover(visible)}
-            overlay={<AssigneeDropdown assignee={value} onChange={handleChange} />}
+            // A workflow action is a standing rule, not an assignment happening now, and the API
+            // exempts automations from the availability block.
+            overlay={<AssigneeDropdown assignee={value} onChange={handleChange} blockUnavailable={false} />}
         >
             <LemonButton type="secondary" sideIcon={<IconChevronDown />} fullWidth>
                 <span className="flex items-center gap-1">

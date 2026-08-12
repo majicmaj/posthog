@@ -3,10 +3,43 @@
  * MCP service uses these Zod schemas for generated tool handlers.
  * To regenerate: hogli build:openapi
  *
- * PostHog API - MCP 8 enabled ops
+ * PostHog API - MCP 10 enabled ops
  * OpenAPI spec version: 1.0.0
  */
 import * as zod from 'zod'
+
+export const ConversationsAvailabilityListParams = /* @__PURE__ */ zod.object({
+    organization_id: zod
+        .string()
+        .describe(
+            "ID of the organization you're trying to access. To find the ID of the organization, make a call to \/api\/organizations\/."
+        ),
+})
+
+export const ConversationsAvailabilityUpdateParams = /* @__PURE__ */ zod.object({
+    id: zod.number().describe('Numeric user id of the agent whose availability is being set.'),
+    organization_id: zod
+        .string()
+        .describe(
+            "ID of the organization you're trying to access. To find the ID of the organization, make a call to \/api\/organizations\/."
+        ),
+})
+
+export const ConversationsAvailabilityUpdateBody = /* @__PURE__ */ zod
+    .object({
+        is_available: zod
+            .boolean()
+            .describe(
+                'False takes the agent out of ticket assignment and hands their open tickets to handoff_role. True makes them assignable again. Tickets already handed off are not given back.'
+            ),
+        handoff_role_id: zod
+            .string()
+            .nullish()
+            .describe(
+                "UUID of the organization role to hand this agent's open tickets to while they are unavailable. Null leaves those tickets unassigned. Remembered across availability changes, so it can be set ahead of time, and omitting it leaves the stored group as it is."
+            ),
+    })
+    .describe("Payload for changing one agent's availability.")
 
 /**
  * List tickets with person data attached.
