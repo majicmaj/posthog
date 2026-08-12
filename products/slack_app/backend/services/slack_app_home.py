@@ -567,7 +567,8 @@ def _active_model_blocks(effective: AIPreferences, source: PreferenceSource) -> 
     """
     header = _section_title(
         "🤖 AI model",
-        "Which Claude / Codex configuration handles your @PostHog mentions.",
+        "Which Claude / Codex configuration handles your @PostHog mentions. "
+        "Applies to Slack only — runs you start in PostHog use the project default set there.",
     )
     source_blurb = {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Source: {source.label}"}]}
 

@@ -23,7 +23,7 @@ export interface AIRunPreferenceDraft {
 
 const EMPTY_DRAFT: AIRunPreferenceDraft = { model: null, reasoning_effort: null }
 
-function draftFromStored(stored: TasksAIRunPreferencesApi | null | undefined): AIRunPreferenceDraft {
+export function draftFromStored(stored: TasksAIRunPreferencesApi | null | undefined): AIRunPreferenceDraft {
     return { model: stored?.model ?? null, reasoning_effort: stored?.reasoning_effort ?? null }
 }
 
