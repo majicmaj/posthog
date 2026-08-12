@@ -31,7 +31,7 @@ from posthog.api.shared import UserBasicSerializer
 from posthog.api.streaming import sse_streaming_response
 from posthog.clickhouse.query_tagging import Product, tag_queries
 from posthog.cloud_utils import is_cloud
-from posthog.event_usage import EventSource, get_event_source
+from posthog.event_usage import MCP_TRANSPORT_EVENT_SOURCES, get_event_source
 from posthog.helpers.impersonation import is_impersonated
 from posthog.models import OrganizationMembership, Team, User
 from posthog.models.activity_logging.activity_log import Change, Detail, log_activity
@@ -198,7 +198,7 @@ class SessionSummariesViewSet(TeamAndOrgViewSetMixin, GenericViewSet):
 
     @staticmethod
     def _resolve_summary_source(request: Request) -> SummarySource:
-        return "mcp" if get_event_source(request) == EventSource.MCP else "api"
+        return "mcp" if get_event_source(request) in MCP_TRANSPORT_EVENT_SOURCES else "api"
 
     def _validate_user(self, request: Request) -> User:
         if not request.user.is_authenticated:
