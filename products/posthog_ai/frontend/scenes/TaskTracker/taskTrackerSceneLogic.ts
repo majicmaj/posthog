@@ -94,8 +94,8 @@ export interface taskTrackerSceneLogicValues {
     activeSuggestionGroup: SuggestionGroup | null
     consentBlocked: boolean
     displayEffort: ReasoningEffortEnumApi
-    displayModel: string
     displayHeadline: string
+    displayModel: string
     headlineSeed: number
     isDefaultSelection: boolean
     isSubmittingTask: boolean
@@ -300,6 +300,14 @@ export interface taskTrackerSceneLogicMeta {
     key: string
     __keaTypeGenInternalSelectorTypes: {
         displayHeadline: (overrideHeadlines: string[] | null, headlineSeed: number) => string
+        displayModel: (newTaskData: TaskCreateForm, claudeDefaultModel: string | null) => string
+        displayEffort: (
+            newTaskData: TaskCreateForm,
+            claudeDefaultEffort: string | null,
+            displayModel: string,
+            catalogue: ModelChoiceApi[]
+        ) => ReasoningEffortEnumApi
+        isDefaultSelection: (newTaskData: TaskCreateForm) => boolean
     }
 }
 

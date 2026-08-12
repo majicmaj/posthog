@@ -306,11 +306,11 @@ export interface runInteractionLogicMeta {
     key: string
     __keaTypeGenInternalSelectorTypes: {
         isTerminal: (currentRunStatus: RunStatus | null) => boolean
-        selectedModel: (modelOverride: string | null, arg: any, claudeDefaultModel: any) => string
+        selectedModel: (modelOverride: string | null, arg: any, claudeDefaultModel: string | null) => string
         selectedEffort: (
             effortOverride: string | null,
             arg: any,
-            claudeDefaultEffort: any,
+            claudeDefaultEffort: string | null,
             selectedModel: string,
             catalogue: ModelChoiceApi[]
         ) => ReasoningEffortEnumApi
