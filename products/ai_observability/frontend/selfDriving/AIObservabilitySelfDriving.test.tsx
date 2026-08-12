@@ -72,6 +72,7 @@ describe('AIObservabilitySelfDriving', () => {
                     updated_at: '2024-01-01T00:00:00Z',
                     created_by: null,
                     deleted: false,
+                    user_access_level: 'editor',
                 },
                 {
                     id: 'evaluation-disabled',
@@ -92,6 +93,7 @@ describe('AIObservabilitySelfDriving', () => {
                     updated_at: '2024-01-02T00:00:00Z',
                     created_by: null,
                     deleted: false,
+                    user_access_level: 'editor',
                 },
             ],
         })
