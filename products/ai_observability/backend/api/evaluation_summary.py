@@ -234,7 +234,7 @@ class LLMEvaluationSummaryViewSet(TeamAndOrgViewSetMixin, viewsets.GenericViewSe
     to prevent client-side data manipulation.
     """
 
-    scope_object = "llm_analytics"
+    scope_object = "evaluation"
     permission_classes = [AccessControlPermission]
 
     def get_throttles(self):

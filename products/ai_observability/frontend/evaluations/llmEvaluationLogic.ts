@@ -8,8 +8,9 @@ import { lemonToast } from 'lib/lemon-ui/LemonToast'
 import { teamLogic } from 'scenes/teamLogic'
 import { urls } from 'scenes/urls'
 
+import { SIDE_PANEL_CONTEXT_KEY, SidePanelSceneContext } from '~/layout/navigation-3000/sidepanel/types'
 import { MaxContextInput, createMaxContextHelpers } from '~/scenes/max/maxTypes'
-import { Breadcrumb } from '~/types'
+import { ActivityScope, Breadcrumb } from '~/types'
 
 import {
     evaluationsCreate,
@@ -262,6 +263,7 @@ export interface llmEvaluationLogicValues {
     runsToSummarizeCount: number
     selectedModel: string
     selectedPickerProviderKeyId: string | null
+    sidePanelContext: SidePanelSceneContext | null
     summaryExpanded: boolean
 }
 
@@ -478,6 +480,10 @@ export interface llmEvaluationLogicMeta {
             searchParams: Record<string, any>
         ) => Breadcrumb[]
         maxContext: (evaluation: EvaluationConfig | null) => MaxContextInput[]
+        sidePanelContext: (
+            evaluation: EvaluationConfig | null,
+            isNewEvaluation: boolean
+        ) => SidePanelSceneContext | null
     }
 }
 
@@ -1355,6 +1361,19 @@ export const llmEvaluationLogic = kea<llmEvaluationLogicType>([
                     }),
                 ]
             },
+        ],
+
+        [SIDE_PANEL_CONTEXT_KEY]: [
+            (s) => [s.evaluation, s.isNewEvaluation],
+            (evaluation: EvaluationConfig | null, isNewEvaluation: boolean): SidePanelSceneContext | null =>
+                evaluation?.id && !isNewEvaluation
+                    ? {
+                          activity_scope: ActivityScope.EVALUATION,
+                          activity_item_id: evaluation.id,
+                          access_control_resource: 'evaluation',
+                          access_control_resource_id: evaluation.id,
+                      }
+                    : null,
         ],
     }),
 

@@ -78,7 +78,7 @@ export function EvaluationSummaryControls(): JSX.Element | null {
         <div className="flex items-center gap-2">
             <Tooltip title={getSummarizeTooltip(runsToSummarizeCount, evaluationSummaryFilter, !!evaluationSummary)}>
                 <AccessControlAction
-                    resourceType={AccessControlResourceType.LlmAnalytics}
+                    resourceType={AccessControlResourceType.Evaluation}
                     minAccessLevel={AccessControlLevel.Editor}
                 >
                     <LemonButton
