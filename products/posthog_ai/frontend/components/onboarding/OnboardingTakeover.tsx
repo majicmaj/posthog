@@ -30,7 +30,7 @@ export interface OnboardingTakeoverProps {
     onStepIndexChange: (stepIndex: number) => void
     /** Rendered under the body copy of the matching step. The one seam for steps that read live state. */
     stepActions?: Partial<Record<OnboardingStepKey, ReactNode>>
-    /** Fires on the close button, Esc, the backdrop, and the quiet skip link. */
+    /** Fires on the close button, Esc, and the backdrop. */
     onDismiss: () => void
     /** Fires when the user advances past the last step. */
     onFinish: () => void
@@ -114,7 +114,7 @@ export function OnboardingTakeover({
                     space-between would push the step dots off the dialog's centerline. Also keeps the bar a
                     single row, where quill's footer would stack it in reverse order below `sm`. */}
                 <DialogFooter className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                    <div className="flex items-center gap-2 justify-self-start">
+                    <div className="justify-self-start">
                         <Button
                             variant="outline"
                             size="sm"
@@ -123,14 +123,6 @@ export function OnboardingTakeover({
                             data-attr="posthog-ai-onboarding-back"
                         >
                             Back
-                        </Button>
-                        <Button
-                            variant="link-muted"
-                            size="sm"
-                            onClick={onDismiss}
-                            data-attr="posthog-ai-onboarding-skip"
-                        >
-                            {isLastStep ? 'Skip for now' : 'Skip'}
                         </Button>
                     </div>
 
