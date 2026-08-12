@@ -5,6 +5,7 @@ import { initKeaTests } from '~/test/init'
 import { logsAttributesRetrieve, logsFacetValuesCreate } from 'products/logs/frontend/generated/api'
 
 import { logsViewerFiltersLogic } from '../Filters/logsViewerFiltersLogic'
+import { facetRailLogic } from './facetRailLogic'
 import { FACETS, FacetConfig } from './facets'
 import { facetValuesLogic } from './facetValuesLogic'
 
@@ -25,6 +26,7 @@ const SERVICE = facetConfig('service')
 
 describe('facetValuesLogic', () => {
     let filtersLogic: ReturnType<typeof logsViewerFiltersLogic.build>
+    let railLogic: ReturnType<typeof facetRailLogic.build>
     const mounted: ReturnType<typeof facetValuesLogic.build>[] = []
 
     const mountFacet = (facet: FacetConfig): ReturnType<typeof facetValuesLogic.build> => {
@@ -41,10 +43,13 @@ describe('facetValuesLogic', () => {
         mockFacetValues.mockResolvedValue({ results: [{ value: 'api', count: 10 }] })
         filtersLogic = logsViewerFiltersLogic({ id: ID })
         filtersLogic.mount()
+        railLogic = facetRailLogic({ id: ID })
+        railLogic.mount()
     })
 
     afterEach(() => {
         mounted.splice(0).forEach((logic) => logic.unmount())
+        railLogic.unmount()
         filtersLogic.unmount()
     })
 
@@ -82,5 +87,29 @@ describe('facetValuesLogic', () => {
                 query: expect.objectContaining({ facetField: 'service_name', facetSearch: 'kaf' }),
             })
         )
+    })
+
+    it('a collapsed facet defers its fetch until it is expanded, then only if the scope moved', async () => {
+        railLogic.actions.toggleFacetCollapsed(SERVICE.key)
+        const logic = mountFacet(SERVICE)
+        const other = mountFacet(LEVEL)
+        await expectLogic(other).toDispatchActions(['loadFacetValuesSuccess'])
+        expect(mockFacetValues).toHaveBeenCalledTimes(1)
+
+        filtersLogic.actions.setSearchTerm('timeout')
+        await expectLogic(other).toDispatchActions(['loadFacetValuesSuccess'])
+        expect(logic.values.facetValues).toEqual([])
+
+        mockFacetValues.mockClear()
+        railLogic.actions.toggleFacetCollapsed(SERVICE.key)
+        await expectLogic(logic).toDispatchActions(['loadFacetValuesSuccess'])
+        expect(mockFacetValues).toHaveBeenCalledTimes(1)
+
+        // Collapsing and expanding again with nothing else changed has nothing to fetch.
+        mockFacetValues.mockClear()
+        railLogic.actions.toggleFacetCollapsed(SERVICE.key)
+        railLogic.actions.toggleFacetCollapsed(SERVICE.key)
+        await expectLogic(logic).toNotHaveDispatchedActions(['loadFacetValues'])
+        expect(mockFacetValues).not.toHaveBeenCalled()
     })
 })
