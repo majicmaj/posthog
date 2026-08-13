@@ -34,6 +34,11 @@ pub struct CoordinatorConfig {
     pub keepalive_interval: Duration,
     pub election_retry_interval: Duration,
 
+    /// How long a standby candidate waits on its leader-key watch before
+    /// re-reading the key. The watch is what normally wakes a candidate;
+    /// this is the bound on how long a stalled one can hide an opening.
+    pub standby_poll_interval: Duration,
+
     /// Consecutive campaign failures tolerated before the coordinator
     /// gives up and lets the process restart. Losing the election lease
     /// and standing by for another leader are not failures; only errors
@@ -89,15 +94,24 @@ impl Default for CoordinatorConfig {
         Self {
             name: "coordinator-0".to_string(),
             // A crashed leader blocks every handoff until its election
-            // lease expires and a survivor's next campaign fires, so the
-            // worst-case coordinator outage is ttl + retry. 5s + 1s keeps
-            // that near the pod-crash detection window, while the 1s
-            // keepalive gives the leader several attempts within the TTL
-            // before it abdicates. Graceful exits don't wait on any of
-            // this — the lease is revoked on the way out.
+            // lease expires and a survivor takes over. Standbys watch the
+            // leader key, so the succession follows the key's deletion
+            // rather than a retry tick, and the TTL is what bounds the
+            // outage. 5s keeps that near the pod-crash detection window,
+            // while the 1s keepalive gives the leader several attempts
+            // within the TTL before it abdicates. Graceful exits don't
+            // wait on any of this — the lease is revoked on the way out.
             leader_lease_ttl: 5,
             keepalive_interval: Duration::from_secs(1),
+            // Paces campaigns that fail, and standing by when the leader
+            // key cannot be watched at all.
             election_retry_interval: Duration::from_secs(1),
+            // How long a standby trusts its watch before re-reading the
+            // leader key. This bounds the leaderless window if a watch
+            // ever stalls without erroring, and it is the only etcd
+            // traffic an idle standby generates, so it buys a wide safety
+            // margin cheaply: one key read per candidate per interval.
+            standby_poll_interval: Duration::from_secs(5),
             failure_budget: 10,
             rebalance_debounce_interval: Duration::from_secs(1),
             reconcile_interval: Duration::from_secs(5),
@@ -173,12 +187,28 @@ impl Coordinator {
             if cancel.is_cancelled() {
                 return Ok(());
             }
-            // Awaited to completion, never raced against cancellation:
-            // dropping try_lead mid-cleanup would strand the election
-            // lease until TTL expiry, stalling every handoff while the
-            // next coordinator's campaign waits it out. try_lead observes
-            // `cancel` internally and returns promptly on shutdown.
-            match self.try_lead(cancel.clone()).await {
+            // Campaign only into an opening. A campaign costs a lease
+            // grant, a transaction and a revoke whether or not it wins,
+            // and every standby pays it: polling the election is the
+            // fleet's largest source of etcd writes, and it scales with
+            // the fleet rather than with how often leadership changes.
+            //
+            // Failing to observe the election counts the same as failing
+            // to enter one. Both leave this candidate unable to lead, so
+            // both spend the budget below rather than retrying in
+            // silence.
+            let attempt = match self.await_election_opening(&cancel).await {
+                Ok(()) if cancel.is_cancelled() => return Ok(()),
+                // Awaited to completion, never raced against
+                // cancellation: dropping try_lead mid-cleanup would
+                // strand the election lease until TTL expiry, stalling
+                // every handoff while the next coordinator's campaign
+                // waits it out. try_lead observes `cancel` internally and
+                // returns promptly on shutdown.
+                Ok(()) => self.try_lead(cancel.clone()).await,
+                Err(e) => Err(e),
+            };
+            match attempt {
                 Ok(true) => {
                     tracing::info!(name = %self.config.name, "leadership ended normally");
                     progress.store(true, Ordering::SeqCst);
@@ -199,11 +229,66 @@ impl Coordinator {
                     ) {
                         return Err(e);
                     }
+                    // A failure leaves the opening open, so the next pass
+                    // would retry immediately. Space the retries out
+                    // rather than campaigning as fast as etcd can reject
+                    // it.
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Ok(()),
+                        _ = tokio::time::sleep(self.config.election_retry_interval) => {}
+                    }
                 }
             }
-            tokio::select! {
-                _ = cancel.cancelled() => return Ok(()),
-                _ = tokio::time::sleep(self.config.election_retry_interval) => {}
+        }
+    }
+
+    /// Block until this candidate has something to campaign for: no
+    /// leader is recorded, or the one that is recorded goes away.
+    /// Returns immediately on cancellation, leaving the caller to notice
+    /// it and stop.
+    ///
+    /// Standing by costs one read per fallback interval and a watch that
+    /// is idle until leadership actually changes, in place of a campaign
+    /// per retry interval. The fallback re-read is what keeps a watch
+    /// that stalls without erroring from parking a candidate forever, so
+    /// the leaderless window stays bounded by it in the worst case.
+    pub async fn await_election_opening(&self, cancel: &CancellationToken) -> Result<()> {
+        loop {
+            // The revision this answer was read at anchors the watch, so
+            // a leader that vanishes between the read and the watch
+            // attaching is still delivered rather than missed.
+            let (leader, revision) = self.store.get_leader_with_revision().await?;
+            let Some(leader) = leader else {
+                return Ok(());
+            };
+            tracing::debug!(
+                name = %self.config.name,
+                leader = %leader.holder,
+                "another coordinator is leader, standing by"
+            );
+
+            let mut stream = self.store.watch_leader_from(revision + 1).await?;
+            let opened = loop {
+                let message = tokio::select! {
+                    _ = cancel.cancelled() => return Ok(()),
+                    _ = tokio::time::sleep(self.config.standby_poll_interval) => break false,
+                    message = stream.message() => message,
+                };
+                // A stream that ends or errors leaves this candidate
+                // blind, so re-read rather than trusting it further.
+                let Ok(Some(response)) = message else {
+                    break false;
+                };
+                if response
+                    .events()
+                    .iter()
+                    .any(|event| event.event_type() == EventType::Delete)
+                {
+                    break true;
+                }
+            };
+            if opened {
+                return Ok(());
             }
         }
     }
@@ -214,6 +299,10 @@ impl Coordinator {
     /// election immediately instead of stranding it until TTL expiry.
     /// `run` relies on that by awaiting this call to completion.
     async fn try_lead(&self, cancel: CancellationToken) -> Result<bool> {
+        // Every campaign costs etcd a lease grant, a transaction and,
+        // when it loses, a revoke. Against wins, this is what says
+        // whether the fleet is electing or merely polling.
+        counter!("personhog_coordination_election_campaigns_total").increment(1);
         let granted_at = Instant::now();
         let lease_id = self.store.grant_lease(self.config.leader_lease_ttl).await?;
 

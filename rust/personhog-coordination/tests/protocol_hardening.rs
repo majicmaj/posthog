@@ -4384,3 +4384,73 @@ async fn a_coordinator_that_cannot_reach_etcd_stops_instead_of_retrying_forever(
         "an unreachable etcd must exhaust the budget and surface as an error"
     );
 }
+
+/// A standby waits on the leader key rather than campaigning at its
+/// retry interval.
+///
+/// Every campaign costs etcd a lease grant, a transaction and a revoke,
+/// paid by each candidate on each retry, so the fleet's election traffic
+/// scaled with the number of candidates rather than with how often
+/// leadership changed. Standing by must cost nothing until the key
+/// actually goes away.
+///
+/// The fallback re-read is set far beyond the test's own timeouts, so
+/// only the watch can end the wait.
+#[tokio::test]
+async fn a_standby_waits_on_the_leader_key_rather_than_campaigning() {
+    let prefix = format!("/test-standby-watch-{}/", uuid::Uuid::new_v4());
+    let store = store_at(ETCD_ENDPOINT, &prefix).await;
+
+    let standby = Arc::new(Coordinator::new(
+        Arc::clone(&store),
+        CoordinatorConfig {
+            name: "standby".to_string(),
+            standby_poll_interval: Duration::from_secs(600),
+            ..Default::default()
+        },
+        Arc::new(StickyBalancedStrategy),
+        None,
+    ));
+    let cancel = CancellationToken::new();
+
+    // With no leader recorded, the election is open and the wait is over
+    // before it starts.
+    tokio::time::timeout(WAIT_TIMEOUT, standby.await_election_opening(&cancel))
+        .await
+        .expect("an unheld election must not make a candidate wait")
+        .expect("reading the leader key must succeed");
+
+    let lease_id = store.grant_lease(10).await.unwrap();
+    assert!(
+        store
+            .try_acquire_leadership("incumbent", lease_id)
+            .await
+            .unwrap(),
+        "the test's own leader must take the key"
+    );
+
+    // An incumbent holds it, so the candidate parks on the watch. The
+    // wait runs as a task from here on, so what ends it is observable:
+    // only the delete can, with the fallback re-read parked past every
+    // timeout in this test.
+    let waiting = {
+        let standby = Arc::clone(&standby);
+        let cancel = cancel.clone();
+        tokio::spawn(async move { standby.await_election_opening(&cancel).await })
+    };
+    tokio::time::sleep(Duration::from_millis(750)).await;
+    assert!(
+        !waiting.is_finished(),
+        "a candidate must not enter an election another coordinator holds"
+    );
+
+    // Losing the lease deletes the key. The wait is anchored on the
+    // revision its read returned, so the delete wakes the candidate
+    // whether or not the watch had attached by the time it landed.
+    store.revoke_lease(lease_id).await.unwrap();
+    tokio::time::timeout(WAIT_TIMEOUT, waiting)
+        .await
+        .expect("the watch must wake the candidate when the leader goes")
+        .expect("the waiting task must not panic")
+        .expect("watching the leader key must succeed");
+}

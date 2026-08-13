@@ -14,7 +14,7 @@ Etcd gives us the building blocks we need without rolling our own consensus:
 
 - **Leases** for failure detection: pod keys auto-delete when a pod crashes, triggering reassignment
 - **Watches** for reactivity: components react to state changes instead of polling
-- **Transactions (CAS)** for leader election: only one coordinator runs at a time
+- **Transactions (CAS)** for leader election: only one coordinator runs at a time. Standby candidates watch the leader key rather than campaigning on a timer, so election traffic tracks how often leadership changes instead of how many candidates are running
 - **Strong consistency**: all participants see the same state
 
 ## Components

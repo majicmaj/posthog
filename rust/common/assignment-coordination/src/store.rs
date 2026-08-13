@@ -170,6 +170,30 @@ impl EtcdStore {
         }
     }
 
+    /// Like `get`, but also returns the etcd store revision the read was
+    /// taken at. This is the single-key counterpart of
+    /// `list_with_revision`, and pairs with `watch_key_from` at the next
+    /// revision the same way: a key that vanishes between the read and
+    /// the watch attaching is still reported, because the watch replays
+    /// from the revision the caller actually observed.
+    ///
+    /// Note the revision comes from the response header, so it is
+    /// meaningful even when the key is absent — which is exactly the case
+    /// a waiter needs to anchor on.
+    pub async fn get_with_revision<T: DeserializeOwned>(
+        &self,
+        key: &str,
+    ) -> Result<(Option<T>, i64)> {
+        let _t = OpTimer::new("get_with_revision");
+        let resp = self.client.clone().get(key, None).await?;
+        record_payload_bytes("get_with_revision", kvs_bytes(resp.kvs()));
+        let revision = resp.header().map(|h| h.revision()).unwrap_or(0);
+        match resp.kvs().first() {
+            Some(kv) => Ok((Some(serde_json::from_slice(kv.value())?), revision)),
+            None => Ok((None, revision)),
+        }
+    }
+
     pub async fn list<T: DeserializeOwned>(&self, prefix: &str) -> Result<Vec<T>> {
         Ok(self.list_with_revision(prefix).await?.0)
     }
@@ -273,6 +297,16 @@ impl EtcdStore {
             .with_prefix()
             .with_start_revision(start_revision);
         let stream = self.client.clone().watch(prefix, Some(options)).await?;
+        Ok(stream)
+    }
+
+    /// Watch a single key — not a prefix — from an explicit revision
+    /// (inclusive). Waiters on one key use this so an unrelated sibling
+    /// key sharing the same string prefix cannot wake them.
+    pub async fn watch_key_from(&self, key: &str, start_revision: i64) -> Result<WatchStream> {
+        let _t = OpTimer::new("watch_key_from");
+        let options = WatchOptions::new().with_start_revision(start_revision);
+        let stream = self.client.clone().watch(key, Some(options)).await?;
         Ok(stream)
     }
 

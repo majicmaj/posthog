@@ -739,6 +739,21 @@ impl PersonhogStore {
         Ok(self.inner.get(&key).await?)
     }
 
+    /// The current leader and the revision that answer was read at. A
+    /// standby anchors its watch on that revision so the leader cannot
+    /// disappear unobserved in the gap before the watch attaches.
+    pub async fn get_leader_with_revision(&self) -> Result<(Option<LeaderInfo>, i64)> {
+        count_call("get_leader_with_revision");
+        let key = self.key(StoreKey::Leader);
+        Ok(self.inner.get_with_revision(&key).await?)
+    }
+
+    /// Watch the leader key alone, from `start_revision` inclusive.
+    pub async fn watch_leader_from(&self, start_revision: i64) -> Result<WatchStream> {
+        let key = self.key(StoreKey::Leader);
+        Ok(self.inner.watch_key_from(&key, start_revision).await?)
+    }
+
     // ── Lease operations ────────────────────────────────────────
 
     pub async fn grant_lease(&self, ttl: i64) -> Result<i64> {

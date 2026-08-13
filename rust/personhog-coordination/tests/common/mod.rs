@@ -146,6 +146,9 @@ pub fn start_coordinator_with_deadline(
             leader_lease_ttl,
             keepalive_interval: Duration::from_secs(keepalive_secs),
             election_retry_interval: Duration::from_secs(1),
+            // Short enough that a failover never waits on the leader-key
+            // watch alone.
+            standby_poll_interval: Duration::from_millis(500),
             failure_budget: 10,
             rebalance_debounce_interval: Duration::from_millis(100),
             reconcile_interval: Duration::from_millis(500),
