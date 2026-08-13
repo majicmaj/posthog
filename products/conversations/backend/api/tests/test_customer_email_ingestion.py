@@ -29,6 +29,7 @@ from products.conversations.backend.models import (
     EmailThreadMessageDirection,
     Ticket,
 )
+from products.customer_analytics.backend.facade.email_matching import recalculate_email_thread_links
 
 
 class TestCustomerEmailIngestion(BaseTest):
@@ -184,7 +185,13 @@ class TestCustomerEmailIngestion(BaseTest):
 
     @parameterized.expand(
         [
-            ("missing_spf", {"X-Mailgun-Spf": ""}),
+            (
+                "failed_spf_and_dkim",
+                {
+                    "X-Mailgun-Spf": "fail",
+                    "X-Mailgun-Dkim-Check-Result": "fail",
+                },
+            ),
             ("wrong_source", {"subject": "Gmail Forwarding Confirmation - Receive Mail from attacker@example.com"}),
             (
                 "wrong_dkim_domain",
@@ -354,6 +361,7 @@ class TestCustomerEmailIngestion(BaseTest):
         )
 
         assert reply_response.status_code == 200
+        recalculate_email_thread_links(self.team.id, thread_ids=[str(thread.id)])
         thread.refresh_from_db()
         messages = list(EmailThreadMessage.objects.for_team(self.team.id).filter(thread=thread))
         assert thread.message_count == 2
