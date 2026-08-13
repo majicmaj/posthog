@@ -42562,6 +42562,7 @@ export namespace Schemas {
       company_name: string;
       representative_email: string;
       status: string;
+      signed_pdf_stored: boolean;
       created_by: LegalDocumentCreator | null;
       created_at: string;
     }
