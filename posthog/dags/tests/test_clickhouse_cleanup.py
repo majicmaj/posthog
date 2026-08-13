@@ -6,6 +6,9 @@ from uuid import UUID
 import pytest
 from unittest.mock import patch
 
+from django.conf import settings as django_settings
+
+import dagster
 import psycopg2
 from clickhouse_driver import Client
 
@@ -761,3 +764,15 @@ def test_a_mutation_that_fails_every_attempt_fails_the_run_and_gets_killed(
         return count
 
     assert cluster.any_host(unfinished_mutations).result() == 0
+
+
+def test_the_weekly_schedule_launches_a_real_run():
+    # Weekly hard-deletion has no Celery fallback anymore. A schedule that ships stopped, drifts
+    # off its cron setting, or loses the dry_run override silently ends or no-ops the sweep.
+    schedule = clickhouse_cleanup.clickhouse_deletion_sweep_schedule
+    assert schedule.cron_schedule == django_settings.CLICKHOUSE_DELETION_SWEEP_SCHEDULE
+    assert schedule.default_status == dagster.DefaultScheduleStatus.RUNNING
+
+    request = schedule(dagster.build_schedule_context())
+    assert isinstance(request, dagster.RunRequest)
+    assert request.run_config == RUN_FOR_REAL

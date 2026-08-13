@@ -37,7 +37,7 @@ from posthog.clickhouse.client.connection import ClickHouseUser, get_clickhouse_
 from posthog.clickhouse.cluster import ClickhouseCluster, LightweightDeleteMutationRunner, MutationWaiter, NodeRole
 from posthog.clickhouse.custom_metrics import MetricsClient
 from posthog.dags.common import JobOwners
-from posthog.dags.common.common import settings_with_log_comment
+from posthog.dags.common.common import settings_with_log_comment, skip_if_already_running
 from posthog.models.async_deletion.delete_cohorts import sweep_cohort_deletions
 from posthog.models.person.sql import PERSON_DISTINCT_ID2_TABLE, PERSONS_TABLE
 
@@ -1063,3 +1063,23 @@ def clickhouse_deletion_sweep_job():
 
     # Each op takes the previous op's output, which is what keeps the sweeps in sequence.
     drop_snapshot_assets(delete_persons(run))
+
+
+@dagster.schedule(
+    job=clickhouse_deletion_sweep_job,
+    cron_schedule=settings.CLICKHOUSE_DELETION_SWEEP_SCHEDULE,
+    execution_timezone="UTC",
+    name="clickhouse_deletion_sweep_schedule",
+    # Enabled on registration. The Celery schedules that used to do this work are gone, and a
+    # schedule that never fires raises no alert, so shipping it stopped would end weekly
+    # hard-deletion silently.
+    default_status=dagster.DefaultScheduleStatus.RUNNING,
+)
+@skip_if_already_running
+def clickhouse_deletion_sweep_schedule(context: dagster.ScheduleEvaluationContext):
+    # A sweep that outruns its weekly tick would otherwise start a second run that mutates the
+    # same tables concurrently.
+    #
+    # The schedule is the only launch that deletes. dry_run defaults to true, so an ad-hoc run
+    # from the Dagster UI reports what it would remove rather than removing it.
+    return dagster.RunRequest(run_config={"ops": {"clear_removed_cohort_data": {"config": {"dry_run": False}}}})
