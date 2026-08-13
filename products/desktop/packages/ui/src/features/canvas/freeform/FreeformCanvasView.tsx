@@ -23,6 +23,7 @@ import {
   type CanvasTextSelection,
   limitCanvasCommentHighlights,
 } from "@posthog/core/canvas/freeformSchemas";
+import { extractRepoSelectionRepository } from "@posthog/core/inbox/artefacts";
 import { useHostTRPC } from "@posthog/host-router/react";
 import {
   Badge,
@@ -40,6 +41,9 @@ import {
 } from "@posthog/quill";
 import { CANVAS_COMPONENT_PATH } from "@posthog/shared";
 import { ANALYTICS_EVENTS } from "@posthog/shared/analytics-events";
+import type { Task } from "@posthog/shared/domain-types";
+import { useOptionalAuthenticatedClient } from "@posthog/ui/features/auth/authClient";
+import { useCurrentUser } from "@posthog/ui/features/auth/useCurrentUser";
 import {
   isCanvasGenerating,
   isCanvasGenerationRunning,
@@ -59,6 +63,14 @@ import {
   useFreeformChatStore,
   useFreeformThread,
 } from "@posthog/ui/features/canvas/stores/freeformChatStore";
+import {
+  useInboxReportArtefacts,
+  useInboxReportById,
+} from "@posthog/ui/features/inbox/hooks/useInboxReports";
+import {
+  findUserDiscussionTask,
+  useReportTasks,
+} from "@posthog/ui/features/inbox/hooks/useReportTasks";
 import type { EditorHandle } from "@posthog/ui/features/message-editor/types";
 import { useCommentNavigationStore } from "@posthog/ui/features/sessions/commentNavigationStore";
 import {
@@ -178,6 +190,40 @@ export function FreeformCanvasView({
   );
   const genTaskId = dashboard?.generationTaskId ?? null;
   const channelId = dashboard?.channelId ?? "";
+  const stableDiscussionTaskId = dashboard?.discussionTaskId ?? null;
+  const { data: stableDiscussionTask } = useQuery({
+    ...taskDetailQuery(stableDiscussionTaskId ?? ""),
+    enabled: !!stableDiscussionTaskId,
+  });
+  const reportId =
+    stableDiscussionTask?.origin_product === "signal_report"
+      ? (stableDiscussionTask.signal_report ?? null)
+      : null;
+  const { data: report } = useInboxReportById(reportId, {
+    enabled: !!reportId,
+    staleTime: 10_000,
+  });
+  const { data: reportArtefacts } = useInboxReportArtefacts(reportId ?? "", {
+    enabled: !!reportId,
+    staleTime: 10_000,
+  });
+  const reportRepository = extractRepoSelectionRepository(
+    reportArtefacts?.results,
+  );
+  const { data: reportTasks } = useReportTasks(
+    reportId ?? "",
+    report?.status ?? "ready",
+  );
+  const authClient = useOptionalAuthenticatedClient();
+  const { data: currentUser } = useCurrentUser({ client: authClient });
+  const persistedReportDiscussionTask = findUserDiscussionTask(
+    reportTasks,
+    currentUser?.uuid,
+  );
+  const [startedReportDiscussionTask, setStartedReportDiscussionTask] =
+    useState<Task | null>(null);
+  const reportDiscussionTask =
+    startedReportDiscussionTask ?? persistedReportDiscussionTask;
 
   useEffect(() => {
     if (genTaskId) setStartedTaskId(null);
@@ -302,7 +348,8 @@ export function FreeformCanvasView({
   const { drafts, isLoading: draftsLoading } = useCanvasDrafts(
     interactive ? dashboardId : undefined,
   );
-  const commentTaskId = canvasCommentTaskId(genTaskId, versions);
+  const commentTaskId =
+    dashboard?.discussionTaskId ?? canvasCommentTaskId(genTaskId, versions);
   // The browsed version is a draft preview when it matches a staged draft
   // rather than a published version. Drives the Draft label and Promote action.
   const browsingDraft = drafts.some(
@@ -1083,6 +1130,11 @@ export function FreeformCanvasView({
             isEdit={hasSource}
             editorRef={editorRef}
             onStarted={setStartedTaskId}
+            reportId={reportId}
+            report={report ?? null}
+            reportRepository={reportRepository}
+            reportDiscussionTask={reportDiscussionTask}
+            onReportDiscussionStarted={setStartedReportDiscussionTask}
           />
         </ResizableSidebar>
       )}
