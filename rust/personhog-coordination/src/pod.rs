@@ -1034,6 +1034,22 @@ impl PodHandle {
             || self.fenced_partitions.lock().await.contains(&partition)
     }
 
+    /// Whether an event for `partition` concerns this pod: it holds
+    /// state for it, or it is converging it right now.
+    ///
+    /// The in-flight half covers the window where a pod is doing the most
+    /// work and holding the least state to show for it. A new owner
+    /// records its warm only once `warm_partition` returns, so for the
+    /// whole replay it is in neither map — and that is exactly when a
+    /// long warm is most likely to be cancelled out from under it.
+    /// Skipping the event there would leave the pod finishing a warm for
+    /// a handoff that no longer exists, then holding the cache until the
+    /// reconcile tick noticed. Dispatching instead coalesces onto the
+    /// running convergence, so it re-derives once the warm completes.
+    async fn is_involved(&self, partition: u32, in_flight: &HashSet<u32>) -> bool {
+        in_flight.contains(&partition) || self.holds_local_state(partition).await
+    }
+
     /// Re-derive and apply the desired state for one partition from fresh
     /// point reads. Every watch event is just a signal to look again —
     /// convergence acts on observed durable state, never on remembered
@@ -1504,7 +1520,9 @@ impl PodHandle {
                                     let pod = &self.config.pod_name;
                                     let named = handoff.old_owner.as_deref() == Some(pod.as_str())
                                         || handoff.new_owner == *pod;
-                                    if named || self.holds_local_state(handoff.partition).await {
+                                    if named
+                                        || self.is_involved(handoff.partition, &in_flight).await
+                                    {
                                         Some(handoff.partition)
                                     } else {
                                         None
@@ -1515,17 +1533,18 @@ impl PodHandle {
                                     None
                                 }
                             },
-                            // A delete carries no owners, so only local
-                            // state can say whether this pod is involved.
-                            // That is the case that matters: a cancelled
-                            // handoff has to reach the old owner holding
-                            // its fence.
+                            // A delete carries no owners, so only this
+                            // pod's own involvement can decide. That is
+                            // the case that matters: a cancelled handoff
+                            // has to reach the old owner holding its
+                            // fence, and the new owner still warming for
+                            // it.
                             EventType::Delete => match event
                                 .kv()
                                 .and_then(|kv| from_utf8(kv.key()).ok())
                                 .and_then(store::extract_partition_from_key)
                             {
-                                Some(p) if self.holds_local_state(p).await => Some(p),
+                                Some(p) if self.is_involved(p, &in_flight).await => Some(p),
                                 _ => None,
                             },
                         };

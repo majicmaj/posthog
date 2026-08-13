@@ -4714,3 +4714,65 @@ async fn a_freeze_quorum_reference_that_is_gone_requires_every_live_router() {
         "a record carrying its membership inline must still be judged by it"
     );
 }
+
+/// A handoff cancelled while its new owner is still warming must reach
+/// that pod.
+///
+/// A new owner records its warm only once `warm_partition` returns, and
+/// it holds no fence, so for the whole replay it holds no local state
+/// for the partition — and a long warm is exactly what a deadline
+/// cancels. Deciding involvement from local state alone drops the
+/// deletion there, leaving the pod to finish a warm for a handoff that
+/// no longer exists and hold the cache until a reconcile tick notices.
+/// This pod's reconcile tick is parked, so only the event path can
+/// produce the release.
+#[tokio::test]
+async fn a_handoff_cancelled_mid_warm_reaches_the_pod_still_warming() {
+    let store = test_store("cancel-mid-warm").await;
+    let cancel = CancellationToken::new();
+
+    let pod = start_pod_gated(Arc::clone(&store), "mid-warm-pod", 4, cancel.clone());
+
+    let check = Arc::clone(&store);
+    wait_for_condition(WAIT_TIMEOUT, POLL_INTERVAL, || {
+        let store = Arc::clone(&check);
+        async move {
+            store
+                .list_pods()
+                .await
+                .map(|pods| pods.iter().any(|p| p.pod_name == "mid-warm-pod"))
+                .unwrap_or(false)
+        }
+    })
+    .await;
+
+    // Acquire partition 0 as the new owner of a fresh assignment. The
+    // gate is shut, so the warm parks and the pod holds nothing for the
+    // partition yet.
+    put_handoff(&store, 0, None, "mid-warm-pod", HandoffPhase::Warming).await;
+    wait_for_condition(WAIT_TIMEOUT, POLL_INTERVAL, || {
+        let in_flight = Arc::clone(&pod.warms_in_flight);
+        async move {
+            in_flight
+                .lock()
+                .expect("warms in flight lock poisoned")
+                .get(&0)
+                .is_some_and(|count| *count > 0)
+        }
+    })
+    .await;
+    assert!(
+        !pod.events.lock().await.contains(&HandoffEvent::Warmed(0)),
+        "the warm must still be parked at the gate"
+    );
+
+    // Cancel it out from under the warm, then let the warm finish.
+    store.delete_handoff(0).await.expect("delete handoff");
+    pod.gates.open(0);
+
+    // Nothing assigns the partition to this pod, so converging on the
+    // deletion must release what the warm installed.
+    wait_for_event(&pod.events, HandoffEvent::Released(0)).await;
+
+    cancel.cancel();
+}
