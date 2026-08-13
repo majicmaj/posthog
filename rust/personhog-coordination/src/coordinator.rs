@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::str::from_utf8;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -32,6 +33,14 @@ pub struct CoordinatorConfig {
     pub leader_lease_ttl: i64,
     pub keepalive_interval: Duration,
     pub election_retry_interval: Duration,
+
+    /// Consecutive campaign failures tolerated before the coordinator
+    /// gives up and lets the process restart. Losing the election lease
+    /// and standing by for another leader are not failures; only errors
+    /// are, and any completed campaign clears the count. Without this the
+    /// loop retries a deterministic failure forever, which is invisible:
+    /// it emits no counter and cannot escalate.
+    pub failure_budget: u32,
     /// How long to wait after the first pod event before rebalancing, to batch
     /// rapid pod registrations into a single rebalance.
     pub rebalance_debounce_interval: Duration,
@@ -89,6 +98,7 @@ impl Default for CoordinatorConfig {
             leader_lease_ttl: 5,
             keepalive_interval: Duration::from_secs(1),
             election_retry_interval: Duration::from_secs(1),
+            failure_budget: 10,
             rebalance_debounce_interval: Duration::from_secs(1),
             reconcile_interval: Duration::from_secs(5),
             handoff_deadline: Duration::from_secs(120),
@@ -152,6 +162,13 @@ impl Coordinator {
     /// or cancellation is requested.
     pub async fn run(&self, cancel: CancellationToken) -> Result<()> {
         util::preregister_coordinator_metrics();
+        // A completed campaign — won, or stood down for another leader —
+        // clears the failure count. The wedge this budget exists for
+        // produces no completed campaigns: winning and then failing the
+        // coordination loop returns `Err` every time, so the count only
+        // ever climbs.
+        let progress = AtomicBool::new(false);
+        let mut consecutive_failures = 0u32;
         loop {
             if cancel.is_cancelled() {
                 return Ok(());
@@ -162,10 +179,26 @@ impl Coordinator {
             // next coordinator's campaign waits it out. try_lead observes
             // `cancel` internally and returns promptly on shutdown.
             match self.try_lead(cancel.clone()).await {
-                Ok(true) => tracing::info!(name = %self.config.name, "leadership ended normally"),
-                Ok(false) => {}
+                Ok(true) => {
+                    tracing::info!(name = %self.config.name, "leadership ended normally");
+                    progress.store(true, Ordering::SeqCst);
+                }
+                Ok(false) => progress.store(true, Ordering::SeqCst),
+                Err(e) if e.is_leadership_lost() => {
+                    tracing::info!(name = %self.config.name, "abdicated; a successor takes over");
+                    progress.store(true, Ordering::SeqCst);
+                }
                 Err(e) => {
-                    tracing::warn!(name = %self.config.name, error = %e, "leader loop ended with error")
+                    if !util::note_run_failure(
+                        &mut consecutive_failures,
+                        &progress,
+                        self.config.failure_budget,
+                        "coordinator",
+                        &self.config.name,
+                        &e,
+                    ) {
+                        return Err(e);
+                    }
                 }
             }
             tokio::select! {

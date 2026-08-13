@@ -312,8 +312,69 @@ pub fn preregister_router_coordination_metrics() {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    use super::new_handoff_id;
+    use super::{new_handoff_id, note_run_failure};
+    use crate::error::Error;
+
+    /// Losing the election lease ends a leadership term but says nothing
+    /// about this process's health — a successor takes over and
+    /// reconciles. Counting abdications toward the failure budget would
+    /// restart routers for the protocol working as designed.
+    #[test]
+    fn an_abdication_is_not_a_process_failure() {
+        assert!(Error::leadership_lost().is_leadership_lost());
+        assert!(!Error::invalid_state("etcd unreachable").is_leadership_lost());
+        assert!(!Error::NotFound("handoffs/7".to_string()).is_leadership_lost());
+    }
+
+    /// The budget exists for a failure that repeats forever, so it must
+    /// survive a campaign that succeeds in between: without the progress
+    /// reset, sporadic errors spread over hours would eventually restart
+    /// a healthy standby.
+    #[test]
+    fn a_completed_campaign_clears_the_failure_count() {
+        let progress = AtomicBool::new(false);
+        let err = Error::invalid_state("etcd unreachable");
+        let mut consecutive = 0u32;
+
+        for attempt in 1..3 {
+            assert!(
+                note_run_failure(&mut consecutive, &progress, 3, "coordinator", "c", &err),
+                "attempt {attempt} is within budget"
+            );
+        }
+
+        progress.store(true, Ordering::SeqCst);
+        assert!(
+            note_run_failure(&mut consecutive, &progress, 3, "coordinator", "c", &err),
+            "a completed campaign resets the count"
+        );
+        assert_eq!(consecutive, 1);
+    }
+
+    /// And it must escalate when nothing succeeds in between — this is
+    /// the wedge it exists for: winning the election and then failing the
+    /// coordination loop returns an error every single time.
+    #[test]
+    fn an_unbroken_run_of_failures_exhausts_the_budget() {
+        let progress = AtomicBool::new(false);
+        let err = Error::invalid_state("list_handoffs failed");
+        let mut consecutive = 0u32;
+
+        assert!(note_run_failure(
+            &mut consecutive,
+            &progress,
+            2,
+            "coordinator",
+            "c",
+            &err
+        ));
+        assert!(
+            !note_run_failure(&mut consecutive, &progress, 2, "coordinator", "c", &err),
+            "the budget is spent, so the caller must stop retrying"
+        );
+    }
 
     /// Quorum correlation and cancellation detection hang off id
     /// uniqueness; ids minted in the same instant (a handoff cancelled

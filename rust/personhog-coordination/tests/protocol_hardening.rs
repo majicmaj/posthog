@@ -30,6 +30,7 @@ use common::{
     FlakyProxy, HandoffEvent, MockCutoverHandler, MockHandoffHandler, ETCD_ENDPOINT, POLL_INTERVAL,
     WAIT_TIMEOUT,
 };
+use personhog_coordination::coordinator::{Coordinator, CoordinatorConfig};
 use personhog_coordination::error::Result;
 use personhog_coordination::routing_table::{RoutingTable, RoutingTableConfig, StashHandler};
 use personhog_coordination::store::PersonhogStore;
@@ -4337,4 +4338,49 @@ async fn a_pending_new_owner_is_hinted_but_not_warmed() {
     );
 
     cancel.cancel();
+}
+
+/// A coordinator whose etcd is unreachable must give up so the process
+/// can restart, instead of re-campaigning forever.
+///
+/// The loop previously logged a warning and slept, with no counter and no
+/// way to return an error, so its caller's `signal_failure` was
+/// unreachable. A deterministic failure — a request etcd always rejects,
+/// a connection that never comes back — then produced a cluster with no
+/// working coordinator, no partitions moving, and nothing but a warn log
+/// to say so.
+#[tokio::test]
+async fn a_coordinator_that_cannot_reach_etcd_stops_instead_of_retrying_forever() {
+    let proxy = FlakyProxy::start("127.0.0.1:2379").await;
+    let prefix = format!("/test-coordinator-budget-{}/", uuid::Uuid::new_v4());
+    // Connect while the proxy is healthy: the failure under test is a
+    // connection that dies later, not one that never opened.
+    let store = store_at(&proxy.endpoint, &prefix).await;
+
+    let coordinator = Coordinator::new(
+        Arc::clone(&store),
+        CoordinatorConfig {
+            name: "coordinator-budget".to_string(),
+            election_retry_interval: Duration::from_millis(10),
+            failure_budget: 3,
+            ..Default::default()
+        },
+        Arc::new(StickyBalancedStrategy),
+        None,
+    );
+
+    proxy.set_blackholed(true);
+    proxy.sever();
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(20),
+        coordinator.run(CancellationToken::new()),
+    )
+    .await
+    .expect("the coordinator must return rather than campaign forever");
+
+    assert!(
+        outcome.is_err(),
+        "an unreachable etcd must exhaust the budget and surface as an error"
+    );
 }
