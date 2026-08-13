@@ -5,7 +5,6 @@ import { Suspense } from 'react'
 import { LemonTabs, SpinnerOverlay } from '@posthog/lemon-ui'
 
 import { AccessDenied } from 'lib/components/AccessDenied'
-import { useFeatureFlag } from 'lib/hooks/useFeatureFlag'
 import { getAppContext } from 'lib/utils/getAppContext'
 import { lazyWithRetry } from 'lib/utils/retryImport'
 import { urls } from 'scenes/urls'
@@ -38,9 +37,8 @@ function hasEffectiveResourceAccess(resourceType: AccessControlResourceType): bo
 export function Alerts({ alertId }: AlertsProps): JSX.Element {
     const { push } = useActions(router)
     const { searchParams } = useValues(router)
-    const showLogAlerts = useFeatureFlag('LOGS_ALERTING')
     const canViewInsightAlerts = hasEffectiveResourceAccess(AccessControlResourceType.Insight)
-    const canViewLogAlerts = showLogAlerts && hasEffectiveResourceAccess(AccessControlResourceType.Logs)
+    const canViewLogAlerts = hasEffectiveResourceAccess(AccessControlResourceType.Logs)
 
     const activeTab = getActiveAlertsTab({
         alertId,

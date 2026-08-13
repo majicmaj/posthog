@@ -910,7 +910,6 @@ export const SETTINGS_MAP: SettingSection[] = [
                 title: 'Alerting',
                 description: 'Configure alerts to get notified when log volumes breach thresholds.',
                 component: <LogsAlertingSection />,
-                flag: 'LOGS_ALERTING',
                 keywords: ['notification', 'alert', 'threshold', 'logs'],
             },
         ],

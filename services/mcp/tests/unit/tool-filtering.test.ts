@@ -830,7 +830,6 @@ describe('Tool Filtering - Feature Flags', () => {
         const flags = getRequiredFeatureFlags()
         expect(flags).toEqual(
             expect.arrayContaining([
-                'logs-alerting',
                 'logs-anomalies',
                 'logs-patterns-view',
                 'llm-analytics-datasets',

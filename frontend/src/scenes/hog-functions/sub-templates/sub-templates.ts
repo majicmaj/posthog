@@ -1,4 +1,4 @@
-import { FEATURE_FLAGS, INSIGHT_ALERT_FIRING_SUB_TEMPLATE_ID } from 'lib/constants'
+import { INSIGHT_ALERT_FIRING_SUB_TEMPLATE_ID } from 'lib/constants'
 
 import {
     CyclotronJobFilterEvents,
@@ -200,28 +200,24 @@ export const HOG_FUNCTION_SUB_TEMPLATE_COMMON_PROPERTIES: Record<
         type: 'internal_destination',
         context_id: 'logs-alerting',
         filters: { events: [{ id: '$logs_alert_firing', type: 'events' }] },
-        flag: FEATURE_FLAGS.LOGS_ALERTING,
     },
     'logs-alert-resolved': {
         sub_template_id: 'logs-alert-resolved',
         type: 'internal_destination',
         context_id: 'logs-alerting',
         filters: { events: [{ id: '$logs_alert_resolved', type: 'events' }] },
-        flag: FEATURE_FLAGS.LOGS_ALERTING,
     },
     'logs-alert-auto-disabled': {
         sub_template_id: 'logs-alert-auto-disabled',
         type: 'internal_destination',
         context_id: 'logs-alerting',
         filters: { events: [{ id: '$logs_alert_auto_disabled', type: 'events' }] },
-        flag: FEATURE_FLAGS.LOGS_ALERTING,
     },
     'logs-alert-errored': {
         sub_template_id: 'logs-alert-errored',
         type: 'internal_destination',
         context_id: 'logs-alerting',
         filters: { events: [{ id: '$logs_alert_errored', type: 'events' }] },
-        flag: FEATURE_FLAGS.LOGS_ALERTING,
     },
     'health-check-firing': {
         sub_template_id: 'health-check-firing',
