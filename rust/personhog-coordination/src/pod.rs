@@ -371,6 +371,7 @@ impl PodHandle {
     /// its registration fast — a registered but non-acking router would
     /// stall every freeze quorum until the phase deadline.
     pub async fn run(&self, cancel: CancellationToken) -> Result<()> {
+        util::preregister_pod_metrics();
         let mut consecutive_failures: u32 = 0;
         // Set by the coordination loop whenever it applies real work
         // (a convergence completed); consumed by each failure note to

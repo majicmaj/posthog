@@ -749,7 +749,18 @@ impl PersonhogStore {
         handoff: &HandoffState,
     ) -> Result<Option<Vec<String>>> {
         match &handoff.freeze_quorum_ref {
-            Some(id) => self.get_freeze_quorum(id).await,
+            Some(id) => {
+                let members = self.get_freeze_quorum(id).await?;
+                if members.is_none() {
+                    crate::util::record_unresolved_freeze_quorum();
+                    tracing::warn!(
+                        partition = handoff.partition,
+                        quorum_id = %id,
+                        "freeze quorum record is missing; requiring every live router"
+                    );
+                }
+                Ok(members)
+            }
             None => Ok(handoff.freeze_quorum.clone()),
         }
     }

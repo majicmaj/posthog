@@ -250,6 +250,14 @@ pub async fn run_lease_keepalive(
 /// drown the signal. Same-cluster clocks make millisecond skew
 /// negligible for the diagnostic purpose; records stamped by
 /// pre-instrumentation writers (zero) are skipped.
+/// Count a freeze-quorum reference that resolved to no record. The
+/// handoff falls back to requiring every live router, so a nonzero rate
+/// explains a handoff that is slower to advance than its membership
+/// would suggest.
+pub fn record_unresolved_freeze_quorum() {
+    metrics::counter!("personhog_coordination_unresolved_freeze_quorums_total").increment(1);
+}
+
 /// Count a handoff watch event by whether it reached a convergence.
 /// The skipped share says how much of the fan-out this pod is not
 /// party to, and a skipped rate of zero during a rebalance means the
@@ -309,6 +317,18 @@ pub fn preregister_coordinator_metrics() {
     metrics::counter!("personhog_coordination_partition_releases_total").increment(0);
     metrics::gauge!("personhog_coordination_generation_hold_pods").set(0.0);
     metrics::gauge!("personhog_coordination_generation_capped_pods").set(0.0);
+}
+
+/// Same as [`preregister_coordinator_metrics`], for the counters a
+/// writer pod's coordination layer emits.
+pub fn preregister_pod_metrics() {
+    for disposition in ["converged", "skipped"] {
+        metrics::counter!(
+            "personhog_coordination_handoff_events_total",
+            "disposition" => disposition
+        )
+        .increment(0);
+    }
 }
 
 /// Same as [`preregister_coordinator_metrics`], for the counters the
