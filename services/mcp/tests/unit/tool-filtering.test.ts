@@ -832,7 +832,6 @@ describe('Tool Filtering - Feature Flags', () => {
             expect.arrayContaining([
                 'logs-alerting',
                 'logs-anomalies',
-                'logs-patterns-view',
                 'llm-analytics-datasets',
                 'tracing',
                 'visual-review',
