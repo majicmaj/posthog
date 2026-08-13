@@ -1196,6 +1196,7 @@ class AccountViewSet(
 
         paginator = cast(LimitOffsetPagination, self.paginator)
         limit = paginator.get_limit(request)
+        assert limit is not None
         offset = paginator.get_offset(request)
         try:
             result = api.get_account_email_thread_messages(
