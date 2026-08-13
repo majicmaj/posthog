@@ -32,13 +32,17 @@ const WIDTH = 1088
 const HEIGHT = 612
 const FPS = 25
 
-/** One entry per step that gets a clip. `posterAt` is the frame the panel rests on, in clip milliseconds. */
+/**
+ * One entry per step that gets a clip. Neither length nor poster frame is configured here: the story
+ * publishes its own duration on `window.__phaiClipDurationMs`, and the poster is the clip's last frame,
+ * which is the most complete state in every one of these scripts.
+ */
 const CLIPS = [
-    { key: 'ask', story: 'products-posthog-ai-onboarding-clips--ask', durationMs: 9500, posterAt: 4000 },
-    { key: 'delegate', story: 'products-posthog-ai-onboarding-clips--delegate', durationMs: 12000, posterAt: 6000 },
-    { key: 'skills', story: 'products-posthog-ai-onboarding-clips--skills', durationMs: 7500, posterAt: 2000 },
-    { key: 'connect', story: 'products-posthog-ai-onboarding-clips--connect', durationMs: 9000, posterAt: 7000 },
-    { key: 'start', story: 'products-posthog-ai-onboarding-clips--start', durationMs: 8500, posterAt: 7500 },
+    { key: 'ask', story: 'products-posthog-ai-onboarding-clips--ask' },
+    { key: 'delegate', story: 'products-posthog-ai-onboarding-clips--delegate' },
+    { key: 'skills', story: 'products-posthog-ai-onboarding-clips--skills' },
+    { key: 'connect', story: 'products-posthog-ai-onboarding-clips--connect' },
+    { key: 'start', story: 'products-posthog-ai-onboarding-clips--start' },
 ]
 
 async function record(browser, clip) {
@@ -50,6 +54,8 @@ async function record(browser, clip) {
     await page.waitForFunction(() => typeof window.__phaiClipReplay === 'function', null, { timeout: 60_000 })
     // Let the first render settle (fonts, icons) so frame one isn't a half-painted stage.
     await page.waitForTimeout(1500)
+
+    const durationMs = await page.evaluate(() => window.__phaiClipDurationMs ?? 8000)
 
     const frames = []
     const cdp = await page.context().newCDPSession(page)
@@ -71,21 +77,21 @@ async function record(browser, clip) {
     })
 
     await page.evaluate(() => window.__phaiClipReplay?.())
-    await page.waitForTimeout(clip.durationMs)
+    await page.waitForTimeout(durationMs)
     await cdp.send('Page.stopScreencast')
     await page.close()
 
     if (frames.length === 0) {
         throw new Error(`${clip.key}: the screencast produced no frames`)
     }
-    return frames
+    return { frames, durationMs }
 }
 
 /**
  * Screencast frames arrive only when something repaints, so a still beat is one frame held for seconds.
  * The concat demuxer replays them on their real timings; ffmpeg resamples that to a constant frame rate.
  */
-function encode(clip, frames) {
+function encode(clip, frames, durationMs) {
     rmSync(TMP_DIR, { recursive: true, force: true })
     mkdirSync(TMP_DIR, { recursive: true })
 
@@ -94,7 +100,7 @@ function encode(clip, frames) {
     frames.forEach((frame, i) => {
         const name = `f${String(i).padStart(5, '0')}.jpg`
         writeFileSync(join(TMP_DIR, name), Buffer.from(frame.data, 'base64'))
-        const next = frames[i + 1] ? frames[i + 1].timestamp : base + clip.durationMs / 1000
+        const next = frames[i + 1] ? frames[i + 1].timestamp : base + durationMs / 1000
         // Floor at a millisecond, not a frame: screencast frames often arrive a few milliseconds apart,
         // and padding each one out to 1/FPS would stretch the film well past its real length.
         lines.push(`file '${name}'`, `duration ${Math.max(next - frame.timestamp, 0.001).toFixed(4)}`)
@@ -133,25 +139,11 @@ function encode(clip, frames) {
         { stdio: 'inherit' }
     )
 
+    // The last frame: every script ends on its most complete state, which is what the panel should rest on.
     const poster = join(OUT_DIR, `${clip.key}.jpg`)
-    execFileSync(
-        'ffmpeg',
-        [
-            '-y',
-            '-ss',
-            (clip.posterAt / 1000).toFixed(2),
-            '-i',
-            mp4,
-            '-frames:v',
-            '1',
-            '-update',
-            '1',
-            '-q:v',
-            '4',
-            poster,
-        ],
-        { stdio: 'inherit' }
-    )
+    execFileSync('ffmpeg', ['-y', '-sseof', '-0.3', '-i', mp4, '-frames:v', '1', '-update', '1', '-q:v', '4', poster], {
+        stdio: 'inherit',
+    })
 
     rmSync(TMP_DIR, { recursive: true, force: true })
     return mp4
@@ -167,9 +159,9 @@ const browser = await chromium.launch()
 try {
     for (const clip of selected) {
         process.stdout.write(`recording ${clip.key}…\n`)
-        const frames = await record(browser, clip)
-        const out = encode(clip, frames)
-        process.stdout.write(`  ${frames.length} frames → ${out}\n`)
+        const { frames, durationMs } = await record(browser, clip)
+        const out = encode(clip, frames, durationMs)
+        process.stdout.write(`  ${(durationMs / 1000).toFixed(1)}s, ${frames.length} frames → ${out}\n`)
     }
 } finally {
     await browser.close()

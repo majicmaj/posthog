@@ -7,7 +7,7 @@ import type { StoredLogEntry } from '../../../types/wireTypes'
 /**
  * Recording rig for the onboarding step clips.
  *
- * Each clip is a Storybook story filmed by `bin/record-onboarding-clips.mjs`. Rather than capture a live
+ * Each clip is a Storybook story filmed by `recordClips.mjs` — see README.md. Rather than capture a live
  * agent run — which needs gateway credentials, takes a different path every time, and would put someone's
  * real project data in a public asset — a clip replays a scripted list of wire frames through the real
  * `runStreamLogic`. The fold, the thread, the tool cards and the plan card are all the product's own; only
@@ -17,12 +17,6 @@ import type { StoredLogEntry } from '../../../types/wireTypes'
  * 1088x612 device pixels of UI laid out at the width it will actually be displayed at. Recording a full
  * 1440px window instead would shrink the app to 38% in the panel, where body text lands at ~5px.
  */
-
-/** The media panel's CSS size, from `.PhaiOnboardingTakeover__media` at the 36rem dialog width. */
-export const CLIP_WIDTH = 544
-export const CLIP_HEIGHT = 306
-/** Films at 2x so the clip is crisp on a retina display. */
-export const CLIP_SCALE = 2
 
 export interface ClipBeat {
     /** Milliseconds from the start of the clip. */
@@ -49,23 +43,99 @@ export function userPrompt(text: string): StoredLogEntry {
     return sessionUpdate({ sessionUpdate: 'user_message', content: { text } })
 }
 
-/** Splits text into chunk frames so the clip shows it typing rather than appearing whole. */
-export function streamedMessage(messageId: string, text: string, startAt: number, msPerChunk: number): ClipBeat[] {
-    const words = text.split(' ')
-    const chunkSize = 3
-    const beats: ClipBeat[] = []
-    for (let i = 0; i < words.length; i += chunkSize) {
-        const delta = (i === 0 ? '' : ' ') + words.slice(i, i + chunkSize).join(' ')
-        beats.push({
-            at: startAt + (i / chunkSize) * msPerChunk,
-            frame: sessionUpdate({ sessionUpdate: 'agent_message_chunk', messageId, content: { text: delta } }),
-        })
+/*
+ * Pacing.
+ *
+ * A clip plays in the dialog's media panel while the viewer is also reading the step's headline and body,
+ * and it loops. So a clip longer than the few seconds someone spends on a step never gets seen whole — it
+ * is cut off partway and restarted. The target is 6-8 seconds end to end, which means the schedule spends
+ * its budget on the one thing the step is selling and moves briskly through everything else.
+ *
+ * The numbers below are perception thresholds, not taste:
+ */
+
+/** Under ~400ms two changes read as one jump cut rather than as two events. */
+const BEAT_MIN = 500
+/** Skim rate. Enough to register what a line is; not enough to read it word by word, which no one does. */
+const SKIM_MS_PER_WORD = 120
+/** Ceiling for a supporting beat — past this the clip reads as waiting rather than as moving. */
+const SKIM_MAX = 1400
+/** The hero beat: the query, the plan, the thing the step exists to show. */
+const HERO_HOLD = 2600
+/** Per 3-word chunk. Fast enough to feel live, slow enough that the growth is visible. */
+const STREAM_MS_PER_CHUNK = 60
+/** Trailing hold before the loop restarts, so the last frame lands before it cuts. */
+export const CLIP_TAIL = 700
+
+function skimHold(text: string): number {
+    return Math.min(Math.max(BEAT_MIN, text.split(' ').length * SKIM_MS_PER_WORD), SKIM_MAX)
+}
+
+/**
+ * Builds a clip's schedule by accumulating holds, so a script reads as a sequence of beats and no timestamp
+ * has to be recomputed by hand when one of them changes.
+ */
+export class ClipTimeline {
+    private cursor = 0
+    private readonly beats: ClipBeat[] = []
+
+    /** A wire frame, held for `hold` (defaults to the perception floor). */
+    frame(frame: StoredLogEntry, hold: number = BEAT_MIN, source?: 'live' | 'replay'): this {
+        this.beats.push({ at: this.cursor, frame, source })
+        this.cursor += hold
+        return this
     }
-    beats.push({
-        at: startAt + Math.ceil(words.length / chunkSize) * msPerChunk,
-        frame: sessionUpdate({ sessionUpdate: 'agent_message', messageId, content: { text } }),
-    })
-    return beats
+
+    /** The user's turn. Held long enough to register the question, not to study it. */
+    ask(text: string): this {
+        return this.frame(userPrompt(text), skimHold(text))
+    }
+
+    /** An assistant message, streamed in chunks and then held for a skim. */
+    say(messageId: string, text: string): this {
+        const words = text.split(' ')
+        for (let i = 0; i < words.length; i += 3) {
+            const delta = (i === 0 ? '' : ' ') + words.slice(i, i + 3).join(' ')
+            this.beats.push({
+                at: this.cursor + (i / 3) * STREAM_MS_PER_CHUNK,
+                frame: sessionUpdate({ sessionUpdate: 'agent_message_chunk', messageId, content: { text: delta } }),
+            })
+        }
+        this.cursor += Math.ceil(words.length / 3) * STREAM_MS_PER_CHUNK
+        this.beats.push({
+            at: this.cursor,
+            frame: sessionUpdate({ sessionUpdate: 'agent_message', messageId, content: { text } }),
+        })
+        this.cursor += skimHold(text)
+        return this
+    }
+
+    /** The beat the step is selling — the only one that gets a full hold. */
+    hero(frame: StoredLogEntry): this {
+        return this.frame(frame, HERO_HOLD)
+    }
+
+    /** Something the wire can't express: a run artifact, or a clip's own local state. */
+    act(run: NonNullable<ClipBeat['run']>, hold: number = BEAT_MIN): this {
+        this.beats.push({ at: this.cursor, run })
+        this.cursor += hold
+        return this
+    }
+
+    /** An explicit pause, for a beat that needs more room than its kind normally gets. */
+    wait(ms: number): this {
+        this.cursor += ms
+        return this
+    }
+
+    /** Milliseconds the clip needs, tail included — what the recorder should film. */
+    get durationMs(): number {
+        return this.cursor + CLIP_TAIL
+    }
+
+    build(): ClipBeat[] {
+        return this.beats
+    }
 }
 
 /**
@@ -75,10 +145,13 @@ export function streamedMessage(messageId: string, text: string, startAt: number
 declare global {
     interface Window {
         __phaiClipReplay?: () => void
+        /** How long the recorder should film. Read from the schedule so the two can't drift apart. */
+        __phaiClipDurationMs?: number
     }
 }
 
-function ClipScript({ beats }: { beats: readonly ClipBeat[] }): null {
+function ClipScript({ clip }: { clip: ClipTimeline }): null {
+    const beats = clip.build()
     const actions = useActions(runStreamLogic)
     // Every ingested frame re-renders this subtree. Reading the actions through a ref keeps the schedule
     // effect on empty deps, so the timers are laid down once instead of being torn down and restarted by
@@ -105,6 +178,7 @@ function ClipScript({ beats }: { beats: readonly ClipBeat[] }): null {
         // Plays on its own so the story is watchable in Storybook. The recorder opens the story with
         // `clipAutoplay=0` and starts it by hand, so capture can't catch a run already in progress.
         window.__phaiClipReplay = play
+        window.__phaiClipDurationMs = clip.durationMs
         if (new URLSearchParams(window.location.search).get('clipAutoplay') !== '0') {
             play()
         }
@@ -112,6 +186,7 @@ function ClipScript({ beats }: { beats: readonly ClipBeat[] }): null {
         return () => {
             timers.forEach((timer) => clearTimeout(timer))
             delete window.__phaiClipReplay
+            delete window.__phaiClipDurationMs
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
@@ -122,7 +197,7 @@ function ClipScript({ beats }: { beats: readonly ClipBeat[] }): null {
 export interface ClipStageProps {
     /** Distinct per clip so two stories never share folded state. */
     streamKey: string
-    beats: readonly ClipBeat[]
+    clip: ClipTimeline
     children: ReactNode
 }
 
@@ -169,7 +244,7 @@ export function useClipTimeline(steps: readonly ClipStep[]): void {
 }
 
 /** The framed, zoomed stage every clip is filmed inside. */
-export function ClipStage({ streamKey, beats, children }: ClipStageProps): JSX.Element {
+export function ClipStage({ streamKey, clip, children }: ClipStageProps): JSX.Element {
     // Stable identity: an inline object would hand `BindLogic` fresh props on every render, remounting the
     // logic — and clearing the log — with each frame the script delivers.
     const logicProps = useMemo(() => ({ streamKey }), [streamKey])
@@ -177,10 +252,16 @@ export function ClipStage({ streamKey, beats, children }: ClipStageProps): JSX.E
     return (
         <div className="w-[544px] h-[306px] overflow-hidden bg-primary [zoom:2]">
             <BindLogic logic={runStreamLogic} props={logicProps}>
-                <ClipScript beats={beats} />
-                {/* Bottom-anchored, the way a real thread sits: the turn fills the panel from the floor up
-                    instead of stranding the last card above half a frame of empty background. */}
-                <div className="flex h-full flex-col justify-end overflow-hidden px-3 py-2">{children}</div>
+                <ClipScript clip={clip} />
+                {/*
+                 * Bottom-anchored, the way a real thread sits: the turn fills the panel from the floor up
+                 * instead of stranding the last card above half a frame of empty background.
+                 *
+                 * `gap-1.5` matches the virtualizer's own 6px row gap. In flow mode `VirtualizedThread.Row`
+                 * is transparent and `Root` renders rows as bare siblings, so inter-message spacing is the
+                 * parent's job — without this the messages butt together.
+                 */}
+                <div className="flex h-full flex-col justify-end gap-1.5 overflow-hidden px-3 py-2">{children}</div>
             </BindLogic>
         </div>
     )

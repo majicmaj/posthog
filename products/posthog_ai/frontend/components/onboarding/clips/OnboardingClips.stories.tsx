@@ -6,7 +6,7 @@ import { cn } from 'lib/utils/css-classes'
 import { Composer } from '../../composer/Composer'
 import { ThreadView } from '../../ThreadView'
 import { DEFAULT_STARTER_PROMPTS } from '../onboardingSteps'
-import { type ClipBeat, ClipStage, sessionUpdate, streamedMessage, userPrompt } from './clipHarness'
+import { ClipStage, ClipTimeline, sessionUpdate, userPrompt } from './clipHarness'
 
 /**
  * Source for the onboarding step clips. One story per step that gets a recording; see `clipHarness.tsx`
@@ -34,25 +34,22 @@ const ASK_QUERY =
     "from events where event = 'signed_up' and timestamp > now() - interval 7 day " +
     'group by country order by signups desc'
 
-const ASK_BEATS: readonly ClipBeat[] = [
-    { at: 0, frame: userPrompt('Which countries did our signups come from last week?') },
-    ...streamedMessage('ask-1', 'Checking the signup events for the last seven days.', 600, 90),
-    {
-        at: 2200,
-        frame: sessionUpdate({
+const ASK_CLIP = new ClipTimeline()
+    .ask('Which countries did our signups come from last week?')
+    // No "let me check that" line first: the card appearing already says the agent is querying, and the
+    // step is selling the query, not the preamble.
+    .hero(
+        sessionUpdate({
             sessionUpdate: 'tool_call',
             toolCallId: 'ask-query',
             serverName: 'posthog',
             toolName: 'exec',
             rawInput: { command: `call execute-sql ${JSON.stringify({ query: ASK_QUERY })}` },
             status: 'in_progress',
-        }),
-    },
-    // The query sits open for four seconds: the card auto-expands while the tool runs and collapses once it
-    // completes, and the query being visible is the whole point of this step.
-    {
-        at: 6400,
-        frame: sessionUpdate({
+        })
+    )
+    .frame(
+        sessionUpdate({
             sessionUpdate: 'tool_call_update',
             toolCallId: 'ask-query',
             status: 'completed',
@@ -66,20 +63,14 @@ const ASK_BEATS: readonly ClipBeat[] = [
                     ['United Kingdom', 96],
                 ],
             },
-        }),
-    },
-    ...streamedMessage(
-        'ask-2',
-        'Signups came from 31 countries. The United States leads with 412, then Germany with 188 and Brazil with 143.',
-        7000,
-        90
-    ),
-]
+        })
+    )
+    .say('ask-2', 'Signups came from 31 countries. The United States leads with 412, then Germany with 188.')
 
 /** Step 2 — ask in plain language, see the query it ran. */
 export const Ask: Story = {
     render: () => (
-        <ClipStage streamKey="clip-ask" beats={ASK_BEATS}>
+        <ClipStage streamKey="clip-ask" clip={ASK_CLIP}>
             <ThreadView virtualized={false} />
         </ClipStage>
     ),
@@ -92,12 +83,11 @@ const DELEGATE_PLAN = `## Audit checkout tracking
 3. Flag steps with no event, and events firing twice
 4. Open a pull request with the instrumentation fixes`
 
-const DELEGATE_BEATS: readonly ClipBeat[] = [
-    { at: 0, frame: userPrompt('Audit our checkout tracking and fix what is broken.') },
-    ...streamedMessage('del-1', 'I will map how checkout fires today, then write a plan.', 600, 90),
-    {
-        at: 2600,
-        frame: sessionUpdate({
+const DELEGATE_CLIP = new ClipTimeline()
+    .ask('Audit our checkout tracking and fix what is broken.')
+    .say('del-1', 'I will map how checkout fires today, then write a plan.')
+    .hero(
+        sessionUpdate({
             sessionUpdate: 'tool_call',
             toolCallId: 'del-plan',
             serverName: 'posthog',
@@ -105,45 +95,40 @@ const DELEGATE_BEATS: readonly ClipBeat[] = [
             rawInput: { plan: DELEGATE_PLAN },
             status: 'pending',
             _meta: { claudeCode: { toolName: 'ExitPlanMode' } },
-        }),
-    },
-    // Long hold: reading the plan is the beat this step is selling.
-    {
-        at: 9000,
-        frame: sessionUpdate({
+        })
+    )
+    .frame(
+        sessionUpdate({
             sessionUpdate: 'tool_call_update',
             toolCallId: 'del-plan',
             status: 'completed',
             _meta: { claudeCode: { toolName: 'ExitPlanMode' } },
-        }),
-    },
-    {
-        at: 9800,
-        frame: sessionUpdate({
+        })
+    )
+    .frame(
+        sessionUpdate({
             sessionUpdate: 'tool_call',
             toolCallId: 'del-work',
             serverName: 'posthog',
             toolName: 'exec',
             rawInput: { command: 'call query-events {"event":"checkout_started"}' },
             status: 'in_progress',
-        }),
-    },
-]
+        })
+    )
 
 /** Step 3 — hand it real work: it plans, you approve, it keeps going. */
 export const Delegate: Story = {
     render: () => (
-        <ClipStage streamKey="clip-delegate" beats={DELEGATE_BEATS}>
+        <ClipStage streamKey="clip-delegate" clip={DELEGATE_CLIP}>
             <ThreadView virtualized={false} />
         </ClipStage>
     ),
 }
 
-const SKILLS_BEATS: readonly ClipBeat[] = [
-    { at: 0, frame: userPrompt('Write up this week for the team.') },
-    {
-        at: 700,
-        frame: sessionUpdate({
+const SKILLS_CLIP = new ClipTimeline()
+    .ask('Write up this week for the team.')
+    .hero(
+        sessionUpdate({
             sessionUpdate: 'tool_call',
             toolCallId: 'skills-invoke',
             serverName: 'posthog',
@@ -151,39 +136,31 @@ const SKILLS_BEATS: readonly ClipBeat[] = [
             rawInput: { skill: 'weekly-product-report' },
             status: 'in_progress',
             _meta: { claudeCode: { toolName: 'Skill' } },
-        }),
-    },
-    {
-        at: 3200,
-        frame: sessionUpdate({
+        })
+    )
+    .frame(
+        sessionUpdate({
             sessionUpdate: 'tool_call_update',
             toolCallId: 'skills-invoke',
             status: 'completed',
             _meta: { claudeCode: { toolName: 'Skill' } },
-        }),
-    },
-    ...streamedMessage(
-        'skills-1',
-        'Following your weekly report skill: activation first, then retention, then the open bugs. Activation rose to 34% this week.',
-        3800,
-        90
-    ),
-]
+        })
+    )
+    .say('skills-1', 'Following your weekly report skill: activation first, then retention, then open bugs.')
 
 /** Step 4 — skills are instructions it follows every time. */
 export const Skills: Story = {
     render: () => (
-        <ClipStage streamKey="clip-skills" beats={SKILLS_BEATS}>
+        <ClipStage streamKey="clip-skills" clip={SKILLS_CLIP}>
             <ThreadView virtualized={false} />
         </ClipStage>
     ),
 }
 
-const CONNECT_BEATS: readonly ClipBeat[] = [
-    { at: 0, frame: userPrompt('Is our signup form instrumented correctly?') },
-    {
-        at: 700,
-        frame: sessionUpdate({
+const CONNECT_CLIP = new ClipTimeline()
+    .ask('Is our signup form instrumented correctly?')
+    .frame(
+        sessionUpdate({
             sessionUpdate: 'tool_call',
             toolCallId: 'connect-read',
             serverName: 'posthog',
@@ -191,31 +168,25 @@ const CONNECT_BEATS: readonly ClipBeat[] = [
             rawInput: { file_path: 'src/components/SignupForm.tsx' },
             status: 'in_progress',
             _meta: { claudeCode: { toolName: 'Read' } },
-        }),
-    },
-    {
-        at: 2600,
-        frame: sessionUpdate({
+        })
+    )
+    .frame(
+        sessionUpdate({
             sessionUpdate: 'tool_call_update',
             toolCallId: 'connect-read',
             status: 'completed',
             _meta: { claudeCode: { toolName: 'Read' } },
-        }),
-    },
-    ...streamedMessage(
-        'connect-1',
-        'signup_completed fires twice: once on submit and once on the redirect. I opened a pull request that removes the duplicate.',
-        3200,
-        90
-    ),
-    // The PR card is a run artifact rather than a wire frame, so it arrives as an action.
-    { at: 6600, run: (actions) => actions.mergeRunArtifacts({ prUrl: 'https://github.com/PostHog/posthog/pull/1' }) },
-]
+        })
+    )
+    .say('connect-1', 'signup_completed fires twice: on submit and on the redirect. I opened a pull request.')
+    // The PR card is a run artifact rather than a wire frame, so it arrives as an action. It is the payoff
+    // of connecting, so it holds like a hero beat.
+    .act((actions) => actions.mergeRunArtifacts({ prUrl: 'https://github.com/PostHog/posthog/pull/1' }), 2600)
 
 /** Step 5 — connect GitHub, and it can read the code and open the fix. */
 export const Connect: Story = {
     render: () => (
-        <ClipStage streamKey="clip-connect" beats={CONNECT_BEATS}>
+        <ClipStage streamKey="clip-connect" clip={CONNECT_CLIP}>
             <ThreadView virtualized={false} />
         </ClipStage>
     ),
@@ -247,15 +218,11 @@ function PointerGlyph({ x, y, pressed }: { x: number; y: number; pressed: boolea
     )
 }
 
-/** Types the prompt in a character at a time, so the composer fills the way a person would fill it. */
-function typingSteps(text: string, startAt: number, msPerChar: number, set: (value: string) => void): ClipBeat[] {
-    return Array.from({ length: text.length }, (_, i) => ({
-        at: startAt + i * msPerChar,
-        run: () => set(text.slice(0, i + 1)),
-    }))
-}
-
-const SEND_AT = 3400
+/**
+ * Types the prompt in a character at a time. 18ms/char reads as brisk human typing — fast enough that the
+ * whole prompt lands in about a second, slow enough that it is visibly being typed rather than pasted.
+ */
+const TYPE_MS_PER_CHAR = 18
 
 function StartClip(): JSX.Element {
     const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
@@ -265,38 +232,35 @@ function StartClip(): JSX.Element {
 
     // The step's own action block already lists the starter prompts, so the clip picks up after the pick:
     // the question lands in the composer, gets sent, and the run is under way before the clip ends.
-    const beats = useMemo<ClipBeat[]>(
-        () => [
-            ...typingSteps(PICKED_PROMPT, 500, 26, setDraft),
-            { at: SEND_AT - 900, run: () => setPointer({ x: 470, y: 250 }) },
-            { at: SEND_AT - 150, run: () => setPressed(true) },
-            {
-                at: SEND_AT,
-                run: () => {
-                    setPressed(false)
-                    setPointer(null)
-                    setSent(true)
-                },
-            },
-            { at: SEND_AT + 150, frame: userPrompt(PICKED_PROMPT) },
-            ...streamedMessage('start-1', 'Starting the audit. Listing the events you send today.', SEND_AT + 700, 90),
-            {
-                at: SEND_AT + 3200,
-                frame: sessionUpdate({
+    const clip = useMemo(() => {
+        const timeline = new ClipTimeline()
+        for (let i = 0; i < PICKED_PROMPT.length; i++) {
+            timeline.act(() => setDraft(PICKED_PROMPT.slice(0, i + 1)), TYPE_MS_PER_CHAR)
+        }
+        return timeline
+            .act(() => setPointer({ x: 470, y: 250 }), 750)
+            .act(() => setPressed(true), 200)
+            .act(() => {
+                setPressed(false)
+                setPointer(null)
+                setSent(true)
+            }, 150)
+            .frame(userPrompt(PICKED_PROMPT))
+            .say('start-1', 'Starting the audit. Listing the events you send today.')
+            .frame(
+                sessionUpdate({
                     sessionUpdate: 'tool_call',
                     toolCallId: 'start-scan',
                     serverName: 'posthog',
                     toolName: 'exec',
                     rawInput: { command: 'call event-definitions {"limit":200}' },
                     status: 'in_progress',
-                }),
-            },
-        ],
-        []
-    )
+                })
+            )
+    }, [])
 
     return (
-        <ClipStage streamKey="clip-start" beats={beats}>
+        <ClipStage streamKey="clip-start" clip={clip}>
             {sent ? (
                 <ThreadView virtualized={false} />
             ) : (
