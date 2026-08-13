@@ -22,7 +22,11 @@ Data sources: `$mcp_tool_call` events (tool names, ordering per `$session_id`) a
 
 ## 2. Online evaluations (AI evals, `/ai-evals` in project 2)
 
-Three LLM-judge trace evaluations, live since Aug 5, 2026. Common configuration: trace target, inactivity settle 300s, judge model `claude-haiku-4-5` on the "Team 2 evals" Anthropic provider key, boolean output with N/A allowed, **2% rollout**, conditions `$ai_product = mcp` AND `$ai_span_name = execute-sql` AND `mcp_data_catalog_enabled = true`. Results land as `$ai_evaluation` events. Cost at this configuration: roughly $70/month total.
+Three LLM-judge trace evaluations, live since Aug 5, 2026. Common configuration: trace target, inactivity settle 300s, judge model `claude-haiku-4-5` on the "Team 2 evals" Anthropic provider key, boolean output with N/A allowed, conditions `$ai_product = mcp` AND `$ai_span_name = execute-sql` AND `mcp_data_catalog_enabled = true`. Results land as `$ai_evaluation` events.
+
+Rollout is per judge: the canonical metric bypass judge runs at **25%** for the release-gate window (raised from 10% on Aug 13, 2026), the other two at **10%**.
+
+Note what the condition scopes: only traces that call `execute-sql` are ever judged. A session that reaches for a `query-*` tool instead, and a run whose prompt is built server-side (the Signals scout head prompt), never appear in these verdicts even when the same agent is behind them.
 
 | Evaluation                                                    | Premise | Verdict                                                                                                                                                                                                                                                                                      |
 | ------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -34,7 +38,8 @@ Every rubric follows the same shape, and new judges should too: **classify appli
 
 ### Reading the rates honestly
 
-- **Compliance rates are conditional.** A judged trace only produces a pass/fail when the premise applied; the rest are N/A. At 2% rollout (~1,750 judged traces/month) with roughly a tenth of sessions being metric questions, expect on the order of 175 applicable verdicts/month, which puts about ±7 points on the monthly compliance rate. Report monthly, not weekly. Raising rollout to 5% (~$175/month) tightens this if needed.
+- **Compliance rates are conditional.** A judged trace only produces a pass/fail when the premise applied; the rest are N/A. At 2% rollout (~1,750 judged traces/month) with roughly a tenth of sessions being metric questions, expect on the order of 175 applicable verdicts/month, which puts about ±7 points on the monthly compliance rate. Report monthly, not weekly. Raising rollout tightens this at proportional cost.
+- **Attribute a failure by MCP consumer and client, not by distinct id.** One distinct id covers several internal agent workloads at once (Signals scout sandboxes, Desktop, tasks), so a prefix match reads as one cohort when it is many. `$mcp_consumer` plus `$mcp_client_name` on the trace's generations separates them. Dashboard tile: "7 · Bypass fails by cohort (internal fleet vs rest)".
 - **The applicability share is itself a result.** It is the semantic answer to "what fraction of sessions are metric questions", and dividing the tile's keyword-matched share by it gives the keyword gate's measured miss rate.
 - **Calibration gates publication.** Hand-read a few dozen verdicts per judge (verdict plus reasoning) before putting any pass-rate on the dashboard, and check specifically whether Haiku's reasoning is deep enough on proposal appropriateness - that judge has the subtlest call and is the candidate for moving to `claude-sonnet-4-6`.
 - **There is no pre-enable test path for trace-target evaluations.** `evaluation_runs` rejects trace-target re-runs against a single generation, and the Hog test endpoint does not cover LLM judges, so validation happens by enabling at a small rollout and reading verdicts. Judge failures (parse errors, provider hiccups) do not auto-disable the evaluation the way Hog errors do.
