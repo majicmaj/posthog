@@ -4758,10 +4758,10 @@ snapshots:
         hash: v1.k794b7964.ea754a4783f7653247f127337c407a8cdd4a9c6bc3f1b908d8d00dd1a090b966.KQ3yKnRzi4l3ZeYVThZdmo4L6mAbxtNa2uQh7y-kGWA
     products-dashboards-dashboard-widgets-widget-types-error-tracking-top-issues--tile-filters-read-only--light:
         hash: v1.k794b7964.b2ca2efc52a9ccf56953159c66d3c8766acd1d3a17379d5faec45a4715ae24a9.fK76p7ZVcgvFJNcKJ5Ixy3YnBm_BcBSFnoytLS2jZdU
-    products-dashboards-dashboard-widgets-widget-types-error-tracking-top-issues-widget-settings--before-exception-ingestion--dark:
-        hash: v1.k794b7964.ee9bd78f705c05a89b8dffa7ce394b1af07b75a9597fd220c94d177b49def5bd.Ii4is9m845vi1gNJRW-Pdw93hMfdAEL_0UIj6lAOTvw
-    products-dashboards-dashboard-widgets-widget-types-error-tracking-top-issues-widget-settings--before-exception-ingestion--light:
-        hash: v1.k794b7964.b71412d69902241f7ec02efa87c138362522d5c7227c36a71e7f0dc0627d2a38.xiUrsbrXCMYmKv85SCzax7k6HNDzZsfKE5ZBhZBFPsI
+    ? products-dashboards-dashboard-widgets-widget-types-error-tracking-top-issues-widget-settings--before-exception-ingestion--dark
+    :   hash: v1.k794b7964.ee9bd78f705c05a89b8dffa7ce394b1af07b75a9597fd220c94d177b49def5bd.Ii4is9m845vi1gNJRW-Pdw93hMfdAEL_0UIj6lAOTvw
+    ? products-dashboards-dashboard-widgets-widget-types-error-tracking-top-issues-widget-settings--before-exception-ingestion--light
+    :   hash: v1.k794b7964.b71412d69902241f7ec02efa87c138362522d5c7227c36a71e7f0dc0627d2a38.xiUrsbrXCMYmKv85SCzax7k6HNDzZsfKE5ZBhZBFPsI
     products-dashboards-dashboard-widgets-widget-types-error-tracking-top-issues-widget-settings--default--dark:
         hash: v1.k794b7964.b1e0f5f542426e34dec73826f3135902a392c0c13dade4fec14037c615186b13.kbxxijyDI1SdvgdKwkRnIRLLgmsine5AYvOcD79DYsY
     products-dashboards-dashboard-widgets-widget-types-error-tracking-top-issues-widget-settings--default--light:
@@ -7595,9 +7595,9 @@ snapshots:
     scenes-app-tasks--mobile-list--light:
         hash: v1.k794b7964.9fd49300ca0d02ce3fe8cf6ea7eb850af2f42332d19a821ac73a6108f33fd651.aHbvQ9EqCKA43njPMkK_xgXEq4rToiJ0U8zAsxjwEWA
     scenes-app-tasks--mobile-new-task--dark:
-        hash: v1.k794b7964.c659bc768ad6ece501075207672466dd3a7f3401fd9fbffbef400d552cfd3007.Nm4GPHMsfybaB-1wJbcZ5Gr8oUCY0qiTPRujpHMpl0g
+        hash: v1.k794b7964.152028e19d3bfdd9a5b43056cc7a534f9306670b6378580c738d91ce8aa0f1ae.kpF88GS5QmzTmo2SghRIiNKvuyb37HLoHPyCl0TO1pw
     scenes-app-tasks--mobile-new-task--light:
-        hash: v1.k794b7964.7d4307cef0f64137bd0278b3e9ca94c620ecbc63a726096ca6bdbc9570073ab5.p-KShlBQ8CPGw75SWnLVHxKGeUOnzvX3tACb5usDH9c
+        hash: v1.k794b7964.30f8365a26f5d40ce829f565fbd5e6ce1a46e91804667fe47847d95ba48a9260.u2eo4jAXtM3tsVq4nl03Q88ivKFl0E4D2si5BGfxtO8
     scenes-app-tasks--mobile-task-selected--dark:
         hash: v1.k794b7964.db0156b3fd83b5c3494116788236075e0bc2c5ace019e4c1d9947d2b21fa70fb.4HfTdy-PBBkgEn0HFlUkrJm0D6GCiujf_ljrGGrLrsc
     scenes-app-tasks--mobile-task-selected--light:
