@@ -32,6 +32,9 @@ enum StoreKey<'a> {
     WarmedAck { partition: u32, pod: &'a str },
     WarmedAcksForPartition(u32),
     WarmedAcksPrefix,
+    // Freeze quorum membership, shared by every handoff one plan creates.
+    FreezeQuorum(&'a str),
+    FreezeQuorumsPrefix,
     Leader,
     Generation,
     TotalPartitions,
@@ -63,6 +66,8 @@ impl StoreKey<'_> {
             }
             StoreKey::WarmedAcksForPartition(p) => format!("{prefix}warmed_acks/{p}/"),
             StoreKey::WarmedAcksPrefix => format!("{prefix}warmed_acks/"),
+            StoreKey::FreezeQuorum(id) => format!("{prefix}freeze_quorums/{id}"),
+            StoreKey::FreezeQuorumsPrefix => format!("{prefix}freeze_quorums/"),
             StoreKey::Leader => format!("{prefix}coordinator/leader"),
             StoreKey::Generation => format!("{prefix}generation"),
             StoreKey::TotalPartitions => format!("{prefix}config/total_partitions"),
@@ -548,7 +553,9 @@ impl PersonhogStore {
         handoffs: &[HandoffState],
         preconditions: &[AssignmentPrecondition],
     ) -> Result<bool> {
-        self.apply_plan(assignments, handoffs, &[], preconditions)
+        // The handoffs come ready-made, so there is no shared
+        // membership to write alongside them.
+        self.apply_plan(assignments, handoffs, &[], preconditions, None)
             .await
     }
 
@@ -561,6 +568,10 @@ impl PersonhogStore {
         handoffs: &[HandoffState],
         replacements: &[HandoffReplacement],
         preconditions: &[AssignmentPrecondition],
+        // The membership every handoff in this plan refers to, written
+        // in the same transaction so no handoff is ever durable with a
+        // reference to a record that does not exist.
+        freeze_quorum: Option<(&str, &[String])>,
     ) -> Result<bool> {
         let mut guards: Vec<Compare> =
             Vec::with_capacity(handoffs.len() + replacements.len() + preconditions.len());
@@ -572,6 +583,12 @@ impl PersonhogStore {
         // they are measured rather than assumed.
         let mut plan_bytes = 0usize;
 
+        if let Some((id, members)) = freeze_quorum {
+            let key = self.key(StoreKey::FreezeQuorum(id));
+            let value = serde_json::to_vec(members)?;
+            plan_bytes += key.len() + value.len();
+            ops.push(TxnOp::put(key, value, None));
+        }
         for a in assignments {
             let key = self.key(StoreKey::Assignment(a.partition));
             let value = serde_json::to_vec(a)?;
@@ -705,6 +722,54 @@ impl PersonhogStore {
             ]);
         let resp = self.inner.txn(txn).await?;
         Ok(resp.succeeded())
+    }
+
+    // ── Freeze quorum membership ────────────────────────────────
+
+    /// The membership record `id` names, or `None` if no record exists.
+    ///
+    /// Callers treat a missing record as "no membership recorded" and
+    /// fall back to requiring every live router, which is the stricter
+    /// rule — so a record lost to garbage collection or an incomplete
+    /// write delays a handoff rather than advancing it early.
+    pub async fn get_freeze_quorum(&self, id: &str) -> Result<Option<Vec<String>>> {
+        count_call("get_freeze_quorum");
+        let key = self.key(StoreKey::FreezeQuorum(id));
+        Ok(self.inner.get(&key).await?)
+    }
+
+    /// The membership a handoff requires, from wherever it is recorded.
+    ///
+    /// Records written before the membership moved into its own key
+    /// carry it inline. `None` — no reference and nothing inline, or a
+    /// reference whose record has gone — means the caller falls back to
+    /// requiring every live router.
+    pub async fn resolve_freeze_quorum(
+        &self,
+        handoff: &HandoffState,
+    ) -> Result<Option<Vec<String>>> {
+        match &handoff.freeze_quorum_ref {
+            Some(id) => self.get_freeze_quorum(id).await,
+            None => Ok(handoff.freeze_quorum.clone()),
+        }
+    }
+
+    /// The ids of every membership record currently stored.
+    pub async fn list_freeze_quorum_ids(&self) -> Result<Vec<String>> {
+        count_call("list_freeze_quorum_ids");
+        let prefix = self.key(StoreKey::FreezeQuorumsPrefix);
+        let keys = self.inner.list_keys(&prefix).await?;
+        Ok(keys
+            .iter()
+            .filter_map(|key| key.strip_prefix(prefix.as_str()))
+            .map(str::to_string)
+            .collect())
+    }
+
+    pub async fn delete_freeze_quorum(&self, id: &str) -> Result<()> {
+        count_call("delete_freeze_quorum");
+        let key = self.key(StoreKey::FreezeQuorum(id));
+        Ok(self.inner.delete(&key).await?)
     }
 
     // ── Leader election ─────────────────────────────────────────

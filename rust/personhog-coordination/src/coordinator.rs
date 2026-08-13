@@ -718,7 +718,14 @@ impl Coordinator {
             tokio::select! {
                 _ = cancel.cancelled() => return Ok(()),
                 _ = tick.tick() => {
+                    // Listed before the handoffs, which is what makes
+                    // the sweep below safe: every handoff that existed
+                    // when these ids were read appears in the newer
+                    // handoff list, and a membership written after this
+                    // read is not a candidate at all.
+                    let quorum_candidates = store.list_freeze_quorum_ids().await;
                     let handoffs = store.list_handoffs().await?;
+                    Self::collect_stale_freeze_quorums(&store, quorum_candidates, &handoffs).await;
                     for handoff in &handoffs {
                         Self::handle_handoff_update_static(&store, handoff).await?;
                         Self::check_phase_advance(&store, handoff.partition, AdvanceTrigger::Other).await?;
@@ -756,6 +763,42 @@ impl Coordinator {
         }
     }
 
+    /// Delete the freeze-quorum records no live handoff refers to.
+    ///
+    /// Housekeeping, so every failure is logged and dropped: a record
+    /// left behind costs a few kilobytes until the next tick, and one
+    /// deleted while still referenced only makes its handoff fall back
+    /// to requiring every live router. Neither can advance a handoff
+    /// early, which is why this runs without a transaction.
+    async fn collect_stale_freeze_quorums(
+        store: &PersonhogStore,
+        candidates: Result<Vec<String>>,
+        handoffs: &[HandoffState],
+    ) {
+        let candidates = match candidates {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::debug!(error = %e, "skipping freeze quorum sweep");
+                return;
+            }
+        };
+        let referenced: HashSet<&str> = handoffs
+            .iter()
+            .filter_map(|h| h.freeze_quorum_ref.as_deref())
+            .collect();
+        for id in candidates
+            .iter()
+            .filter(|id| !referenced.contains(id.as_str()))
+        {
+            match store.delete_freeze_quorum(id).await {
+                Ok(()) => tracing::debug!(quorum_id = %id, "collected unreferenced freeze quorum"),
+                Err(e) => {
+                    tracing::debug!(quorum_id = %id, error = %e, "freeze quorum sweep failed")
+                }
+            }
+        }
+    }
+
     /// Advance a handoff's phase when its current phase's preconditions are satisfied:
     ///   Freezing -> Draining: all registered routers have FreezeAck
     ///   Draining -> Warming:  old owner has DrainedAck (or old owner is gone)
@@ -783,10 +826,11 @@ impl Coordinator {
             HandoffPhase::Freezing => {
                 let routers = store.list_routers().await?;
                 let freeze_acks = store.list_freeze_acks(partition).await?;
+                let quorum = store.resolve_freeze_quorum(&handoff).await?;
 
                 // Quorum semantics live in `protocol::freeze_quorum_met`
                 // (shared with the stateright model).
-                if freeze_quorum_met(&routers, &freeze_acks, &handoff) {
+                if freeze_quorum_met(&routers, &freeze_acks, &handoff, quorum.as_deref()) {
                     // Initial assignments (no old owner) skip Draining
                     // entirely — there's no inflight to wait for. Advance
                     // straight to Warming.
@@ -827,8 +871,12 @@ impl Coordinator {
                     tracing::info!(
                         partition,
                         handoff_id = %handoff.handoff_id,
-                        missing_freeze_ackers =
-                            ?missing_freeze_ackers(&routers, &freeze_acks, &handoff),
+                        missing_freeze_ackers = ?missing_freeze_ackers(
+                            &routers,
+                            &freeze_acks,
+                            &handoff,
+                            quorum.as_deref()
+                        ),
                         "freeze quorum not yet met"
                     );
                 }
@@ -1025,6 +1073,10 @@ impl Coordinator {
         // come and go (see `HandoffState::freeze_quorum`).
         let routers = store.list_routers().await?;
         let freeze_quorum: Vec<String> = routers.iter().map(|r| r.router_name.clone()).collect();
+        // One record for the whole plan: the membership is the same for
+        // every handoff it creates, and inlining it per handoff is what
+        // made a large plan exceed etcd's maximum request size.
+        let freeze_quorum_id = util::new_handoff_id();
 
         let now = util::now_seconds();
         let handoff_objects: Vec<HandoffState> = plan
@@ -1041,7 +1093,8 @@ impl Coordinator {
                 phase: HandoffPhase::Freezing,
                 started_at: now,
                 handoff_id: util::new_handoff_id(),
-                freeze_quorum: Some(freeze_quorum.clone()),
+                freeze_quorum: None,
+                freeze_quorum_ref: Some(freeze_quorum_id.clone()),
                 created_at_ms: now_ms,
                 phase_entered_at_ms: now_ms,
             })
@@ -1104,7 +1157,12 @@ impl Coordinator {
                             phase: HandoffPhase::Complete,
                             started_at: now,
                             handoff_id: util::new_handoff_id(),
+                            // A reaffirm requires no acks at all, which
+                            // an empty membership states directly — no
+                            // record to resolve, and never the legacy
+                            // fallback.
                             freeze_quorum: Some(Vec::new()),
+                            freeze_quorum_ref: None,
                             created_at_ms: now_ms,
                             phase_entered_at_ms: now_ms,
                         },
@@ -1159,7 +1217,13 @@ impl Coordinator {
 
         if (!creations.is_empty() || !replacements.is_empty())
             && !store
-                .apply_plan(&[], &creations, &replacements, &preconditions)
+                .apply_plan(
+                    &[],
+                    &creations,
+                    &replacements,
+                    &preconditions,
+                    Some((&freeze_quorum_id, &freeze_quorum)),
+                )
                 .await?
         {
             // A concurrent invocation (the empty-set re-trigger racing a
@@ -1248,8 +1312,12 @@ impl Coordinator {
             "dead_new_owner"
         };
         let missing_ackers = if predecessor.phase == HandoffPhase::Freezing {
+            let quorum = store
+                .resolve_freeze_quorum(predecessor)
+                .await
+                .unwrap_or(None);
             match store.list_freeze_acks(predecessor.partition).await {
-                Ok(acks) => missing_freeze_ackers(routers, &acks, predecessor),
+                Ok(acks) => missing_freeze_ackers(routers, &acks, predecessor, quorum.as_deref()),
                 Err(e) => {
                     tracing::warn!(error = %e, "could not read freeze acks for attribution");
                     Vec::new()

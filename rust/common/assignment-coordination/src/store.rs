@@ -198,6 +198,22 @@ impl EtcdStore {
         Ok(self.list_with_revision(prefix).await?.0)
     }
 
+    /// The keys under `prefix`, without their values. For callers that
+    /// need to know what exists rather than what it says — etcd leaves
+    /// the values out of the response, so the cost does not scale with
+    /// how large the records are.
+    pub async fn list_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        let _t = OpTimer::new("list_keys");
+        let options = GetOptions::new().with_prefix().with_keys_only();
+        let resp = self.client.clone().get(prefix, Some(options)).await?;
+        record_payload_bytes("list_keys", kvs_bytes(resp.kvs()));
+        Ok(resp
+            .kvs()
+            .iter()
+            .filter_map(|kv| kv.key_str().ok().map(str::to_string))
+            .collect())
+    }
+
     /// Like `list`, but also returns the etcd store revision the snapshot
     /// was taken at. Pair with `watch_from(prefix, revision + 1)` for a
     /// gap-free snapshot-then-watch handshake: every event at or before

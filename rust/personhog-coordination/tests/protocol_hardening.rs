@@ -10,7 +10,7 @@
 use personhog_coordination::authority::AuthorityClock;
 mod common;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -32,6 +32,7 @@ use common::{
 };
 use personhog_coordination::coordinator::{Coordinator, CoordinatorConfig};
 use personhog_coordination::error::Result;
+use personhog_coordination::protocol::freeze_quorum_met;
 use personhog_coordination::routing_table::{RoutingTable, RoutingTableConfig, StashHandler};
 use personhog_coordination::store::PersonhogStore;
 use personhog_coordination::strategy::StickyBalancedStrategy;
@@ -57,6 +58,7 @@ async fn put_handoff(
         started_at: 0,
         handoff_id: format!("test-handoff-{partition}"),
         freeze_quorum: None,
+        freeze_quorum_ref: None,
         created_at_ms: 0,
         phase_entered_at_ms: 0,
         new_owner_address: None,
@@ -2595,6 +2597,7 @@ async fn put_handoff_with_id(
         started_at: 0,
         handoff_id: handoff_id.to_string(),
         freeze_quorum: None,
+        freeze_quorum_ref: None,
         created_at_ms: 0,
         phase_entered_at_ms: 0,
         new_owner_address: None,
@@ -4527,4 +4530,187 @@ async fn a_replaced_handoff_reaches_the_old_owner_it_no_longer_names() {
     wait_for_event(&pod.events, HandoffEvent::Resumed(0)).await;
 
     cancel.cancel();
+}
+
+/// A plan records its freeze-quorum membership once and points its
+/// handoffs at it, rather than writing the router fleet into each one.
+///
+/// Inlining made a handoff record grow with the fleet and a plan
+/// transaction grow with the fleet times the partition count. At a few
+/// hundred of each that exceeded etcd's maximum request size, so the
+/// transaction was rejected and no partition moved at all. The same
+/// bytes were paid again by every list of handoffs.
+///
+/// The sweep is the other half: membership records outlive nothing, so
+/// without collection they accumulate one per plan forever.
+#[tokio::test]
+async fn a_plan_records_its_freeze_quorum_once_and_collects_it_after() {
+    let store = test_store("freeze-quorum-by-reference").await;
+    store.set_total_partitions(2).await.expect("set partitions");
+    let cancel = CancellationToken::new();
+
+    // A registered router that never acks parks every handoff in
+    // Freezing, so the records under test stay put while the test reads
+    // them.
+    let lease_id = store.grant_lease(60).await.expect("grant lease");
+    store
+        .register_router(
+            &RegisteredRouter {
+                router_name: "fqr-router".to_string(),
+                registered_at: 0,
+                last_heartbeat: 0,
+            },
+            lease_id,
+        )
+        .await
+        .expect("register router");
+
+    let _pod = start_pod(Arc::clone(&store), "fqr-pod", cancel.clone());
+    let _coordinator = start_coordinator(
+        Arc::clone(&store),
+        Arc::new(StickyBalancedStrategy),
+        cancel.clone(),
+    );
+
+    let check = Arc::clone(&store);
+    wait_for_condition(WAIT_TIMEOUT, POLL_INTERVAL, || {
+        let store = Arc::clone(&check);
+        async move {
+            store
+                .list_handoffs()
+                .await
+                .map(|handoffs| {
+                    !handoffs.is_empty()
+                        && handoffs.iter().all(|h| h.phase == HandoffPhase::Freezing)
+                })
+                .unwrap_or(false)
+        }
+    })
+    .await;
+
+    let handoffs = store.list_handoffs().await.expect("list handoffs");
+    let referenced: HashSet<String> = handoffs
+        .iter()
+        .filter_map(|h| h.freeze_quorum_ref.clone())
+        .collect();
+    assert_eq!(
+        referenced.len(),
+        1,
+        "every handoff of one plan must point at the same membership record"
+    );
+    for handoff in &handoffs {
+        assert!(
+            handoff.freeze_quorum.is_none(),
+            "the membership must not also be written into the handoff"
+        );
+    }
+
+    let id = referenced.into_iter().next().expect("a referenced id");
+    let members = store
+        .get_freeze_quorum(&id)
+        .await
+        .expect("read membership")
+        .expect("the plan must write the record it points at");
+    assert_eq!(
+        members,
+        vec!["fqr-router".to_string()],
+        "the record must hold the routers registered when the plan ran"
+    );
+
+    // Nothing refers to it once the handoffs are gone, so the sweep on
+    // the coordinator's reconcile tick must take it.
+    for handoff in &handoffs {
+        store
+            .delete_handoff(handoff.partition)
+            .await
+            .expect("delete handoff");
+    }
+    let check = Arc::clone(&store);
+    let swept_id = id.clone();
+    wait_for_condition(WAIT_TIMEOUT, POLL_INTERVAL, || {
+        let store = Arc::clone(&check);
+        let id = swept_id.clone();
+        async move {
+            store
+                .get_freeze_quorum(&id)
+                .await
+                .map(|members| members.is_none())
+                .unwrap_or(false)
+        }
+    })
+    .await;
+
+    cancel.cancel();
+}
+
+/// A freeze-quorum reference that no longer resolves must read as
+/// "membership unknown", never as "membership empty".
+///
+/// The two are one `Option` apart and sit on opposite sides of the
+/// safety argument. Unknown falls back to requiring every live router,
+/// which can only delay a handoff. Empty requires nobody, which would
+/// advance a handoff out of Freezing before any router had stopped
+/// routing to the old owner — the state the freeze exists to prevent.
+#[tokio::test]
+async fn a_freeze_quorum_reference_that_is_gone_requires_every_live_router() {
+    let store = test_store("freeze-quorum-dangling-ref").await;
+
+    let mut handoff = HandoffState {
+        partition: 0,
+        old_owner: Some("pod-old".to_string()),
+        new_owner: "pod-new".to_string(),
+        new_owner_address: None,
+        phase: HandoffPhase::Freezing,
+        started_at: 0,
+        handoff_id: "handoff-dangling".to_string(),
+        freeze_quorum: None,
+        freeze_quorum_ref: Some("never-written".to_string()),
+        created_at_ms: 0,
+        phase_entered_at_ms: 0,
+    };
+
+    let quorum = store
+        .resolve_freeze_quorum(&handoff)
+        .await
+        .expect("resolving must not error");
+    assert!(
+        quorum.is_none(),
+        "a reference with no record must resolve to unknown, not to an empty membership"
+    );
+
+    let routers = [
+        RegisteredRouter {
+            router_name: "router-0".to_string(),
+            registered_at: 0,
+            last_heartbeat: 0,
+        },
+        RegisteredRouter {
+            router_name: "router-1".to_string(),
+            registered_at: 0,
+            last_heartbeat: 0,
+        },
+    ];
+    let acks = [RouterFreezeAck {
+        router_name: "router-0".to_string(),
+        partition: 0,
+        acked_at: 0,
+        acked_at_ms: 0,
+        handoff_id: handoff.handoff_id.clone(),
+    }];
+    assert!(
+        !freeze_quorum_met(&routers, &acks, &handoff, quorum.as_deref()),
+        "one ack of two live routers must not satisfy an unresolvable membership"
+    );
+
+    // An inline membership on an older record still resolves to itself.
+    handoff.freeze_quorum_ref = None;
+    handoff.freeze_quorum = Some(vec!["router-0".to_string()]);
+    let quorum = store
+        .resolve_freeze_quorum(&handoff)
+        .await
+        .expect("resolving must not error");
+    assert!(
+        freeze_quorum_met(&routers, &acks, &handoff, quorum.as_deref()),
+        "a record carrying its membership inline must still be judged by it"
+    );
 }
