@@ -115,6 +115,8 @@ class TestCanvasCloudBuilder(SimpleTestCase):
         self.assertIn('url.protocol!=="https:"', runtime)
         self.assertIn('url.hostname.endsWith(".posthog.com")', runtime)
         self.assertIn("serialized.length>16384", runtime)
+        self.assertIn('createPullRequest:()=>request("report-action"', runtime)
+        self.assertIn('action:"create-pull-request"', runtime)
 
     def _run_runtime_harness(self, runtime: str, harness: str) -> None:
         with tempfile.TemporaryDirectory() as directory:

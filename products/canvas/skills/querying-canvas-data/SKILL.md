@@ -99,3 +99,7 @@ product — rather than every tile resolving the insight's saved default.
   a user interaction (opens outside focus are ignored). Don't link elsewhere.
 - `ph.navigate.toTask(id)` / `.toNewTask()` / `.toCanvas(id)` / `.toNewCanvas()` — in-app
   navigation within the canvas's own channel.
+- `await ph.report.createPullRequest()` — starts implementation only when the host confirms that
+  the current canvas belongs to an actionable Signal report. Call it from a user-clicked control,
+  disable the control while awaiting it, and render any error. Do not show it when the next step is
+  investigation, a decision, configuration, or review.

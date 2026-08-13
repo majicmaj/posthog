@@ -43,6 +43,7 @@ export interface FreeformCanvasProps {
    * just forwards it — the caller maps it to actual routing.
    */
   onNavigate?: (intent: CanvasNavIntent) => void;
+  onReportAction?: (action: "create-pull-request") => Promise<void>;
   onTextSelection?: (selection: CanvasTextSelection | null) => void;
   onCommentActivate?: (id: string) => void;
   commentHighlights?: CanvasCommentHighlight[];
@@ -65,6 +66,7 @@ export function FreeformCanvas({
   onError,
   onRendered,
   onNavigate,
+  onReportAction,
   onTextSelection,
   onCommentActivate,
   commentHighlights = EMPTY_COMMENT_HIGHLIGHTS,
@@ -95,6 +97,7 @@ export function FreeformCanvas({
     onError,
     onRendered,
     onNavigate,
+    onReportAction,
     onTextSelection,
     onCommentActivate,
     code,
@@ -108,6 +111,7 @@ export function FreeformCanvas({
     onError,
     onRendered,
     onNavigate,
+    onReportAction,
     onTextSelection,
     onCommentActivate,
     code,
@@ -164,6 +168,14 @@ export function FreeformCanvas({
         },
         onRendered: () => latest.current.onRendered?.(),
         onNavigate: (intent) => latest.current.onNavigate?.(intent),
+        onReportAction: (action) => {
+          const handler = latest.current.onReportAction;
+          return handler
+            ? handler(action)
+            : Promise.reject(
+                new Error("This action is not available for this canvas"),
+              );
+        },
         onTextSelection: (selection) => {
           if (!selection) {
             latest.current.onTextSelection?.(null);
