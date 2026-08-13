@@ -9,7 +9,7 @@ from collections.abc import Iterable
 
 from products.data_modeling.backend.facade import api as data_modeling_facade
 
-from ..facade.contracts import QUALITY_AUDIT_GATE, QUALITY_AUDIT_SKIP, QUALITY_AUDIT_WARN
+from ..facade.contracts import QUALITY_AUDIT_GATE, QUALITY_AUDIT_SKIP, QUALITY_AUDIT_WARN, QualityAuditMode
 from ..facade.enums import CheckSeverity
 from .flags import is_data_quality_checks_enabled_for_team_id
 
@@ -39,11 +39,9 @@ def materialization_checks_needed(team_id: int, node_ids: Iterable["str | uuid.U
     )
 
 
-def materialization_audit_mode(team_id: int, saved_query_id: "str | uuid.UUID") -> str:
-    """How a materialization of this view should treat its checks.
-
-    ``gate`` requires both the team setting and at least one error-severity check: warn-severity
-    checks can never block a publish, so gating on them would only add latency.
+def materialization_audit_mode(team_id: int, saved_query_id: "str | uuid.UUID") -> QualityAuditMode:
+    """Gating needs an error-severity check as well as the team setting, because a warn-severity
+    failure cannot stop a publish and holding one behind an audit would only add latency.
     """
     from ..models import (  # noqa: PLC0415 — the app registry is not ready at import time
         DataQualityCheck,

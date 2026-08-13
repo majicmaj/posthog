@@ -83,9 +83,7 @@ class NodeResult:
     error: str | None = None
     skipped: bool = False
     skip_reason: str | None = None
-    # The node materialized but failing error-severity checks stopped the publish.
     quality_failed: bool = False
-    # The child ran its own check suite (gate or warn), so the post-DAG sweep must skip it.
     quality_audited: bool = False
 
 
@@ -502,28 +500,19 @@ class ExecuteDAGWorkflow(PostHogWorkflow):
     async def _run_data_quality_checks(self, inputs: ExecuteDAGInputs, node_results: list[NodeResult]) -> None:
         """Fire the check suite for the nodes this run refreshed but did not audit per-node.
 
-        Materialized nodes with checks audit themselves inside MaterializeViewWorkflow (gate or
-        warn mode, reported via quality_audited); this sweep covers what per-node auditing cannot:
-        ephemeral (plain-view) nodes, whose data is a live query over the upstreams this run just
-        refreshed, and children on the pre-audit result version.
-
         Best-effort and fully isolated: started by registered name so data_modeling never imports
         the catalog product, and ABANDON so a check suite can neither delay nor fail the DAG. The
-        node ids come from recorded child results, so replay stays deterministic; the selection
-        change itself is patch-gated because it alters a recorded command's arguments.
+        node ids come from recorded child results, so replay stays deterministic.
 
         The gate activity owns the feature flag and the "are there any checks here" question, both
         of which need the database. Asking first keeps a team with no checks, or an org that never
         opted in, from paying for a child workflow and a suite row on every materialization.
         """
-        if temporalio.workflow.patched("data-quality-node-audit-2026-08"):
-            checkable_node_ids = [
-                result.node_id
-                for result in node_results
-                if result.success and not result.skipped and not result.quality_audited
-            ]
-        else:
-            checkable_node_ids = [result.node_id for result in node_results if result.success and not result.skipped]
+        checkable_node_ids = [
+            result.node_id
+            for result in node_results
+            if result.success and not result.skipped and not result.quality_audited
+        ]
         if not checkable_node_ids:
             return
 

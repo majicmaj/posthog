@@ -1,4 +1,5 @@
 import json
+import asyncio
 import datetime as dt
 import dataclasses
 
@@ -57,7 +58,10 @@ from products.data_modeling.backend.facade.models import DataModelingJobEngine
 from products.data_quality.backend.facade.contracts import (
     CHECK_SUITE_WORKFLOW_NAME,
     QUALITY_AUDIT_GATE,
+    QUALITY_AUDIT_SKIP,
     QUALITY_AUDIT_WARN,
+    QualityAuditMode,
+    is_quality_audit_mode,
 )
 from products.data_quality.backend.facade.enums import SuiteRunTrigger
 
@@ -69,6 +73,15 @@ NON_RETRYABLE_ERRORS = [
     "NodeNotFoundException",
     "EmptyHogQLResponseColumnsError",
 ]
+
+
+def _is_cancellation(error: BaseException) -> bool:
+    """The SDK never re-delivers a cancel, so a handler that swallows one keeps issuing commands."""
+    if isinstance(error, temporalio.exceptions.CancelledError | asyncio.CancelledError):
+        return True
+    return isinstance(
+        error, temporalio.exceptions.ActivityError | temporalio.exceptions.ChildWorkflowError
+    ) and isinstance(error.cause, temporalio.exceptions.CancelledError)
 
 
 @dataclasses.dataclass
@@ -107,8 +120,8 @@ class MaterializeViewWorkflowResult:
         duration_seconds: The total duration of the workflow in seconds.
         quality_blocking_failures: Error-severity check failures that blocked the publish. None
             means no gated audit ran.
-        quality_audited: Whether this run handled its own data quality checks (in any mode), so
-            the DAG's post-run sweep must not run them again.
+        quality_audited: Whether a check suite covered this run, so the DAG's post-run sweep must
+            not run one again.
     """
 
     job_id: str
@@ -232,9 +245,7 @@ class MaterializeViewWorkflow(PostHogWorkflow):
                 # materialize_view_activity guarantees file_uris is non-empty even for
                 # zero-row results — it falls back to _write_empty_parquet_for_zero_rows
                 # so prepare_s3_files_for_querying has something to list.
-                #
-                # Write-audit-publish: quality_audit comes from the materialize activity's recorded
-                # result (default "skip" for pre-deploy histories), so branching on it is replay-safe.
+                quality_audit = self._audit_mode(materialize_result, inputs)
                 prepare_inputs = PrepareQueryableTableInputs(
                     team_id=inputs.team_id,
                     job_id=job_id,
@@ -243,15 +254,15 @@ class MaterializeViewWorkflow(PostHogWorkflow):
                     file_uris=materialize_result.file_uris,
                     row_count=materialize_result.row_count,
                 )
-                if materialize_result.quality_audit == QUALITY_AUDIT_GATE:
+                if quality_audit == QUALITY_AUDIT_GATE:
                     stage_result: StageQueryableFilesResult = await temporalio.workflow.execute_activity(
                         stage_queryable_files_activity,
                         prepare_inputs,
                         start_to_close_timeout=dt.timedelta(minutes=5),
                         retry_policy=temporalio.common.RetryPolicy(maximum_attempts=3),
                     )
-                    blocking_failures = await self._run_staged_audit(
-                        inputs, job_id, materialize_result, stage_result.folder_path
+                    blocking_failures = await self._count_blocking_failures_on_staged_data(
+                        inputs, job_id, materialize_result, stage_result.staged_folder_path
                     )
                     if blocking_failures > 0:
                         await temporalio.workflow.execute_activity(
@@ -280,7 +291,7 @@ class MaterializeViewWorkflow(PostHogWorkflow):
                         publish_queryable_table_activity,
                         PublishQueryableTableInputs(
                             **dataclasses.asdict(prepare_inputs),
-                            folder_path=stage_result.folder_path,
+                            staged_folder_path=stage_result.staged_folder_path,
                         ),
                         start_to_close_timeout=dt.timedelta(minutes=5),
                         retry_policy=temporalio.common.RetryPolicy(maximum_attempts=3),
@@ -319,8 +330,9 @@ class MaterializeViewWorkflow(PostHogWorkflow):
                 # None for in-flight runs on the pre-deploy activity version — treat that as "not needed".
                 await self._maybe_enrich_view_semantics(inputs, succeed_result)
 
-                if materialize_result.quality_audit == QUALITY_AUDIT_WARN:
-                    await self._start_warn_suite(inputs, job_id, materialize_result)
+                quality_audited = quality_audit == QUALITY_AUDIT_GATE
+                if quality_audit == QUALITY_AUDIT_WARN:
+                    quality_audited = await self._start_suite_on_published_data(inputs, job_id, materialize_result)
 
                 # after the main workflow succeeds, collect shadow stats for comparison
                 if duckgres_shadow_handle is not None:
@@ -355,14 +367,12 @@ class MaterializeViewWorkflow(PostHogWorkflow):
                     node_id=inputs.node_id,
                     rows_materialized=materialize_result.row_count,
                     duration_seconds=duration_seconds,
-                    quality_blocking_failures=0 if materialize_result.quality_audit == QUALITY_AUDIT_GATE else None,
-                    quality_audited=materialize_result.quality_audit in (QUALITY_AUDIT_WARN, QUALITY_AUDIT_GATE),
+                    quality_blocking_failures=0 if quality_audit == QUALITY_AUDIT_GATE else None,
+                    quality_audited=quality_audited,
                 )
             except Exception as e:
                 # handle failure
-                cancelled = isinstance(e, temporalio.exceptions.ActivityError) and isinstance(
-                    e.cause, temporalio.exceptions.CancelledError
-                )
+                cancelled = _is_cancellation(e)
                 if cancelled:
                     error_message = "Workflow was cancelled"
                 elif isinstance(e, temporalio.exceptions.ActivityError):
@@ -423,18 +433,16 @@ class MaterializeViewWorkflow(PostHogWorkflow):
             duration_seconds=result.duration_seconds if result else 0,
         )
 
-    async def _run_staged_audit(
+    async def _count_blocking_failures_on_staged_data(
         self,
         inputs: MaterializeViewWorkflowInputs,
         job_id: str,
         materialize_result: MaterializeViewResult,
         staged_folder_path: str,
     ) -> int:
-        """Run the subject's checks against the staged folder; return the blocking-failure count.
+        """A suite that errors returns zero, because a broken check pipeline is not a data verdict.
 
-        Fails open: a suite that errors or times out returns 0 so the publish proceeds — an
-        operational problem with the checks is not a data verdict, and the erroring health state
-        plus notifications are the compensating control.
+        Cancellation is not such a case, so it propagates rather than publishing unaudited data.
         """
         try:
             result = await temporalio.workflow.execute_child_workflow(
@@ -452,6 +460,8 @@ class MaterializeViewWorkflow(PostHogWorkflow):
                 execution_timeout=dt.timedelta(minutes=30),
             )
         except Exception as e:
+            if _is_cancellation(e):
+                raise
             capture_exception(e)
             temporalio.workflow.logger.warning(
                 "Staged data quality audit did not complete; publishing without a verdict",
@@ -462,13 +472,13 @@ class MaterializeViewWorkflow(PostHogWorkflow):
             return int(result.get("checks_failed_blocking") or 0)
         return 0
 
-    async def _start_warn_suite(
+    async def _start_suite_on_published_data(
         self,
         inputs: MaterializeViewWorkflowInputs,
         job_id: str,
         materialize_result: MaterializeViewResult,
-    ) -> None:
-        """Fire-and-forget the subject's checks against the just-published data."""
+    ) -> bool:
+        """False sends the node back to the DAG's sweep, which is where a failed start gets covered."""
         try:
             await temporalio.workflow.start_child_workflow(
                 CHECK_SUITE_WORKFLOW_NAME,
@@ -488,12 +498,28 @@ class MaterializeViewWorkflow(PostHogWorkflow):
                 "Data quality checks already running for this job, skipping",
                 extra=inputs.properties_to_log,
             )
+            return True
         except Exception as e:
             capture_exception(e)
             temporalio.workflow.logger.warning(
                 "Could not start the data quality check suite",
                 extra={"error": str(e), **inputs.properties_to_log},
             )
+            return False
+        return True
+
+    def _audit_mode(
+        self, materialize_result: MaterializeViewResult, inputs: MaterializeViewWorkflowInputs
+    ) -> QualityAuditMode:
+        """A mode this version does not know reads as ``skip``, the behavior that predates the gate."""
+        mode = materialize_result.quality_audit
+        if is_quality_audit_mode(mode):
+            return mode
+        temporalio.workflow.logger.warning(
+            f"Unknown data quality audit mode {mode!r}, publishing without a gate",
+            extra=inputs.properties_to_log,
+        )
+        return QUALITY_AUDIT_SKIP
 
     async def _maybe_enrich_view_semantics(
         self,
