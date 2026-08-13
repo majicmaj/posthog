@@ -150,6 +150,9 @@ pub fn start_coordinator_with_deadline(
             // watch alone.
             standby_poll_interval: Duration::from_millis(500),
             failure_budget: 10,
+            // Short so a test that exhausts the budget does not spend
+            // the real backoff doing it.
+            run_retry_backoff: Duration::from_millis(10),
             rebalance_debounce_interval: Duration::from_millis(100),
             reconcile_interval: Duration::from_millis(500),
             // Callers default this to a day: these tests deliberately

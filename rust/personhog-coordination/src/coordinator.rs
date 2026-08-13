@@ -39,13 +39,27 @@ pub struct CoordinatorConfig {
     /// this is the bound on how long a stalled one can hide an opening.
     pub standby_poll_interval: Duration,
 
-    /// Consecutive campaign failures tolerated before the coordinator
-    /// gives up and lets the process restart. Losing the election lease
-    /// and standing by for another leader are not failures; only errors
-    /// are, and any completed campaign clears the count. Without this the
-    /// loop retries a deterministic failure forever, which is invisible:
-    /// it emits no counter and cannot escalate.
+    /// Consecutive failures tolerated before the coordinator gives up and
+    /// lets the process restart. Losing the election lease and standing
+    /// by for another leader are not failures; only errors are. Without
+    /// this the loop retries a deterministic failure forever, which is
+    /// invisible: it emits no counter and cannot escalate.
+    ///
+    /// A completed reconcile tick clears the count, because a tick that
+    /// completes has applied everything the durable state asked for —
+    /// its phase advances propagate their errors, so a coordinator that
+    /// cannot write stops completing ticks the moment there is anything
+    /// to write. Without that evidence the count is monotonic: winning
+    /// the election and leading well produces no signal, so unrelated
+    /// failures spread over weeks would eventually add up to a restart.
     pub failure_budget: u32,
+    /// Base delay between failed attempts, doubling per consecutive
+    /// failure up to a fixed cap. Paired with `failure_budget` this is
+    /// what the budget measures: the escalation must take long enough
+    /// that an etcd blip cannot spend the whole budget before the
+    /// cluster recovers, since giving up restarts the process this
+    /// coordinator shares with a serving router.
+    pub run_retry_backoff: Duration,
     /// How long to wait after the first pod event before rebalancing, to batch
     /// rapid pod registrations into a single rebalance.
     pub rebalance_debounce_interval: Duration,
@@ -112,6 +126,10 @@ impl Default for CoordinatorConfig {
             // traffic an idle standby generates, so it buys a wide safety
             // margin cheaply: one key read per candidate per interval.
             standby_poll_interval: Duration::from_secs(5),
+            // Matches the pod's and router's supervisors, so the same
+            // budget buys the same tolerance everywhere: ten consecutive
+            // failures span minutes rather than seconds.
+            run_retry_backoff: Duration::from_millis(500),
             failure_budget: 10,
             rebalance_debounce_interval: Duration::from_secs(1),
             reconcile_interval: Duration::from_secs(5),
@@ -176,12 +194,15 @@ impl Coordinator {
     /// or cancellation is requested.
     pub async fn run(&self, cancel: CancellationToken) -> Result<()> {
         util::preregister_coordinator_metrics();
-        // A completed campaign — won, or stood down for another leader —
-        // clears the failure count. The wedge this budget exists for
-        // produces no completed campaigns: winning and then failing the
-        // coordination loop returns `Err` every time, so the count only
-        // ever climbs.
-        let progress = AtomicBool::new(false);
+        // Cleared by a completed reconcile tick — the coordination
+        // loop's own evidence that it applied whatever the durable state
+        // asked for — and by standing down for another leader. Winning
+        // the election is not evidence on its own: the wedge this budget
+        // exists for wins every campaign and then fails the coordination
+        // loop, so a count that only campaigns could reset would never
+        // escalate, and one that nothing resets would escalate on
+        // unrelated failures spread over weeks.
+        let progress = Arc::new(AtomicBool::new(false));
         let mut consecutive_failures = 0u32;
         loop {
             if cancel.is_cancelled() {
@@ -205,7 +226,7 @@ impl Coordinator {
                 // every handoff while the next coordinator's campaign
                 // waits it out. try_lead observes `cancel` internally and
                 // returns promptly on shutdown.
-                Ok(()) => self.try_lead(cancel.clone()).await,
+                Ok(()) => self.try_lead(cancel.clone(), Arc::clone(&progress)).await,
                 Err(e) => Err(e),
             };
             match attempt {
@@ -230,12 +251,20 @@ impl Coordinator {
                         return Err(e);
                     }
                     // A failure leaves the opening open, so the next pass
-                    // would retry immediately. Space the retries out
-                    // rather than campaigning as fast as etcd can reject
-                    // it.
+                    // would retry immediately. Back off as the pod's and
+                    // router's supervisors do: giving up restarts the
+                    // process this coordinator shares with a serving
+                    // router, so the budget has to span an etcd outage
+                    // rather than a handful of seconds of one.
+                    const BACKOFF_CAP: Duration = Duration::from_secs(15);
+                    let backoff = self
+                        .config
+                        .run_retry_backoff
+                        .saturating_mul(2u32.saturating_pow(consecutive_failures.saturating_sub(1)))
+                        .min(BACKOFF_CAP);
                     tokio::select! {
                         _ = cancel.cancelled() => return Ok(()),
-                        _ = tokio::time::sleep(self.config.election_retry_interval) => {}
+                        _ = tokio::time::sleep(backoff) => {}
                     }
                 }
             }
@@ -298,7 +327,7 @@ impl Coordinator {
     /// lease revoke — before returning, so a graceful exit frees the
     /// election immediately instead of stranding it until TTL expiry.
     /// `run` relies on that by awaiting this call to completion.
-    async fn try_lead(&self, cancel: CancellationToken) -> Result<bool> {
+    async fn try_lead(&self, cancel: CancellationToken, progress: Arc<AtomicBool>) -> Result<bool> {
         // Every campaign costs etcd a lease grant, a transaction and,
         // when it loses, a revoke. Against wins, this is what says
         // whether the fleet is electing or merely polling.
@@ -378,7 +407,7 @@ impl Coordinator {
 
         let result = tokio::select! {
             _ = lease_lost.cancelled() => Err(Error::leadership_lost()),
-            result = self.run_coordination_loop(cancel.clone()) => result,
+            result = self.run_coordination_loop(cancel.clone(), progress) => result,
         };
 
         // Clean up keepalive
@@ -394,7 +423,11 @@ impl Coordinator {
         result.map(|()| true)
     }
 
-    async fn run_coordination_loop(&self, cancel: CancellationToken) -> Result<()> {
+    async fn run_coordination_loop(
+        &self,
+        cancel: CancellationToken,
+        progress: Arc<AtomicBool>,
+    ) -> Result<()> {
         // Anchor every watch to a single revision taken BEFORE bootstrap.
         // The coordinator must observe ack writes (PodDrainedAck,
         // PodWarmedAck, RouterFreezeAck) to advance handoffs; anchoring
@@ -502,9 +535,10 @@ impl Coordinator {
             let interval = self.config.reconcile_interval;
             let replan = Arc::clone(&replan);
             let token = cancel.child_token();
-            tasks.spawn(
-                async move { Self::reconcile_tick_loop(store, interval, replan, token).await },
-            );
+            let progress = Arc::clone(&progress);
+            tasks.spawn(async move {
+                Self::reconcile_tick_loop(store, interval, replan, token, progress).await
+            });
         }
 
         // Reconcile any handoffs that already have full ack quorum.
@@ -712,6 +746,7 @@ impl Coordinator {
         interval: Duration,
         replan: Arc<Notify>,
         cancel: CancellationToken,
+        progress: Arc<AtomicBool>,
     ) -> Result<()> {
         let mut tick = tokio::time::interval(interval);
         loop {
@@ -758,6 +793,14 @@ impl Coordinator {
                             tracing::debug!(error = %e, "skipping cluster gauge refresh");
                         }
                     }
+                    // Reaching here means every phase advance the durable
+                    // state asked for was applied: the advances above
+                    // propagate their errors, so a coordinator that
+                    // cannot write stops completing ticks as soon as
+                    // there is anything to write. That makes a completed
+                    // tick the applied-work evidence the run budget
+                    // resets on.
+                    progress.store(true, Ordering::SeqCst);
                 }
             }
         }

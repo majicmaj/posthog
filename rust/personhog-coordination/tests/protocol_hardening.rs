@@ -4776,3 +4776,81 @@ async fn a_handoff_cancelled_mid_warm_reaches_the_pod_still_warming() {
 
     cancel.cancel();
 }
+
+/// Unrelated failures spread across healthy terms must not add up to a
+/// restart.
+///
+/// The run budget bounds a crash loop, not a lifetime. A coordinator
+/// that wins the election and leads well produces no `Ok` outcome — it
+/// returns only when the term ends — so without applied-work evidence
+/// from inside the term the count never resets, and a watch stream that
+/// drops every few days eventually kills a process that was healthy in
+/// between. Giving up restarts the router this coordinator runs beside,
+/// so that mistake costs a serving pod.
+///
+/// The budget here is smaller than the number of outages, so the fix is
+/// what the test turns on.
+#[tokio::test]
+async fn healthy_terms_between_outages_keep_the_coordinator_alive() {
+    let proxy = FlakyProxy::start("127.0.0.1:2379").await;
+    let prefix = format!("/test-coordinator-resets-{}/", uuid::Uuid::new_v4());
+    let store = store_at(&proxy.endpoint, &prefix).await;
+    let direct = store_at(ETCD_ENDPOINT, &prefix).await;
+
+    let coordinator = Coordinator::new(
+        Arc::clone(&store),
+        CoordinatorConfig {
+            name: "resetting-coordinator".to_string(),
+            election_retry_interval: Duration::from_millis(50),
+            run_retry_backoff: Duration::from_millis(10),
+            reconcile_interval: Duration::from_millis(100),
+            failure_budget: 2,
+            ..Default::default()
+        },
+        Arc::new(StickyBalancedStrategy),
+        None,
+    );
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+    let mut running = tokio::spawn(async move { coordinator.run(token).await });
+
+    for outage in 0..3 {
+        // Wait until this coordinator holds the election, which means a
+        // term is running and its reconcile tick — the applied-work
+        // signal — has fired at least once.
+        let check = Arc::clone(&direct);
+        wait_for_condition_named(
+            WAIT_TIMEOUT,
+            POLL_INTERVAL,
+            "the coordinator to lead",
+            || {
+                let store = Arc::clone(&check);
+                async move {
+                    store
+                        .get_leader()
+                        .await
+                        .map(|leader| leader.is_some_and(|l| l.holder == "resetting-coordinator"))
+                        .unwrap_or(false)
+                }
+            },
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        proxy.sever();
+        assert!(
+            !running.is_finished(),
+            "outage {outage} must not end the run while healthy terms separate the failures"
+        );
+    }
+
+    // More outages than the budget have now passed, each with a healthy
+    // term in between.
+    let still_running = tokio::time::timeout(Duration::from_secs(2), &mut running).await;
+    assert!(
+        still_running.is_err(),
+        "a coordinator that keeps recovering must not exhaust its budget"
+    );
+
+    cancel.cancel();
+}
