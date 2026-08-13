@@ -97,6 +97,11 @@ class PostgresTable(FunctionCallTable):
     # to the foreign key pointing at that parent (e.g. system.dashboard_tiles -> "dashboard_id"),
     # so denying the parent also hides its child rows.
     access_control_id_field: Optional[str] = None
+    # Column the entitlement-derived retention floor filters on, for tables whose rows are only
+    # readable back as far as the organization's plan allows. The floor is pushed into the federated
+    # read next to the team guard (see ClickHousePrinter._print_table_ref), so it prunes in Postgres
+    # rather than after the rows have been copied out. None means the table has no retention window.
+    retention_field: Optional[str] = None
     predicates: list[Expr] = []
 
     def get_predicates(self) -> list[Expr]:
