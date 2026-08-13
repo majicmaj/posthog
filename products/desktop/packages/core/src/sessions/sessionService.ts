@@ -97,6 +97,7 @@ import {
 } from "./permissionResponse";
 import {
   convertStoredEntriesToEvents,
+  createConversationClearedEvents,
   createUserShellExecuteEvent,
   extractPromptText,
   getStoredLogEventPosition,
@@ -167,6 +168,17 @@ const SESSION_EVENT_EVICT_GRACE_MS = 20_000;
  * plenty for the initial (scrolled-to-bottom) view.
  */
 const OPEN_TAIL_BYTES = 1_500_000;
+
+/**
+ * Matches a leading `/clear` command the way the agent's own detection does
+ * (`leadingSlashCommand` in the claude adapter): a longer command such as
+ * `/clearcache` doesn't match, and trailing text doesn't change the command,
+ * so the finished-run shortcut and a live agent treat the same message the
+ * same way.
+ */
+function isClearCommand(text: string | undefined): boolean {
+  return /^\/clear(?:\s|$)/.test(text ?? "");
+}
 
 class GitHubAuthorizationRequiredForCloudHandoffError extends Error {
   constructor(
@@ -4246,6 +4258,15 @@ export class SessionService {
     }
 
     if (isTerminalStatus(session.cloudStatus)) {
+      // `/clear` is handled by the agent, not the model, so resuming would spin a
+      // whole sandbox to clear a conversation the next run rebuilds from the log
+      // anyway. The backend records the boundary against this run instead — but only
+      // when the agent understands it. An older one ignores the marker and resumes the
+      // conversation it was meant to retire, so an ordinary resume is the honest
+      // degradation: the clear doesn't happen, and nothing claims it did.
+      if (isClearCommand(transport.messageText) && session.conversationClear) {
+        return this.clearCloudConversation(session);
+      }
       // If the agent never booted (no `run_started`), resuming spins another
       // sandbox that hits the same provisioning failure — surface the error
       // instead of looping.
@@ -4549,6 +4570,26 @@ export class SessionService {
     } finally {
       this.dispatchingCloudQueues.delete(taskId);
     }
+  }
+
+  /** Records the `/clear` boundary against a finished run and paints it locally. */
+  private async clearCloudConversation(
+    session: AgentSession,
+  ): Promise<{ stopReason: string }> {
+    const client = await this.d.getAuthenticatedClient();
+    if (!client) {
+      throw new Error("Authentication required for cloud commands");
+    }
+    this.d.log.info("Clearing cloud conversation", {
+      taskId: session.taskId,
+      taskRunId: session.taskRunId,
+    });
+    await client.clearTaskRunConversation(session.taskId, session.taskRunId);
+    this.d.store.appendEvents(
+      session.taskRunId,
+      createConversationClearedEvents(Date.now()),
+    );
+    return { stopReason: "end_turn" };
   }
 
   private async resumeCloudRun(
