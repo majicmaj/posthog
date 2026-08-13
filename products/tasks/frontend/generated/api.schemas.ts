@@ -2769,6 +2769,8 @@ export interface TaskUsageResponseApi {
     token_cost_usd: number
     /** Estimated cloud compute cost attributed to this task in US dollars. */
     compute_cost_usd: number
+    /** Estimated total cost attributed to this task in US dollars. */
+    total_cost_usd: number
 }
 
 export interface PaginatedTaskRunDetailDTOListApi {
