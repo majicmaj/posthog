@@ -580,7 +580,10 @@ impl PersonhogStore {
         // A plan is one gRPC request and one raft entry, so its size is
         // bounded by etcd's `--max-request-bytes` however small the
         // individual records are. Both terms scale with the fleet, so
-        // they are measured rather than assumed.
+        // they are measured rather than assumed — and the measurement
+        // counts every key the request carries, guards and deletes
+        // included, since a total that omits them reads low against the
+        // exact limit it exists to warn about.
         let mut plan_bytes = 0usize;
 
         if let Some((id, members)) = freeze_quorum {
@@ -601,6 +604,7 @@ impl PersonhogStore {
             plan_bytes += key.len() + value.len();
             // A key that was never created has create_revision 0 — the
             // canonical etcd existence guard.
+            plan_bytes += key.len();
             guards.push(Compare::create_revision(key.clone(), CompareOp::Equal, 0));
             ops.push(TxnOp::put(key, value, None));
         }
@@ -610,23 +614,20 @@ impl PersonhogStore {
             let key = self.key(StoreKey::Handoff(partition));
             let value = serde_json::to_vec(&r.handoff)?;
             plan_bytes += key.len() + value.len();
+            plan_bytes += key.len();
             guards.push(Compare::mod_revision(
                 key.clone(),
                 CompareOp::Equal,
                 r.expected_mod_revision,
             ));
-            ops.push(TxnOp::delete(
+            for acks in [
                 self.key(StoreKey::FreezeAcksForPartition(partition)),
-                prefix_delete(),
-            ));
-            ops.push(TxnOp::delete(
                 self.key(StoreKey::DrainedAcksForPartition(partition)),
-                prefix_delete(),
-            ));
-            ops.push(TxnOp::delete(
                 self.key(StoreKey::WarmedAcksForPartition(partition)),
-                prefix_delete(),
-            ));
+            ] {
+                plan_bytes += acks.len();
+                ops.push(TxnOp::delete(acks, prefix_delete()));
+            }
             ops.push(TxnOp::put(key, value, None));
         }
         for precondition in preconditions {
@@ -636,18 +637,26 @@ impl PersonhogStore {
                     mod_revision,
                 } => {
                     let key = self.key(StoreKey::Assignment(*partition));
+                    plan_bytes += key.len();
                     guards.push(Compare::mod_revision(key, CompareOp::Equal, *mod_revision));
                 }
                 AssignmentPrecondition::Absent { partition } => {
                     let key = self.key(StoreKey::Assignment(*partition));
+                    plan_bytes += key.len();
                     guards.push(Compare::create_revision(key, CompareOp::Equal, 0));
                 }
             }
         }
 
+        // Both lists count toward the request etcd sizes against
+        // `--max-request-bytes`, and each is checked separately against
+        // `--max-txn-ops`, so a sum could not be compared to either
+        // limit or say which list was close to it.
         metrics::histogram!("personhog_coordination_plan_bytes").record(plan_bytes as f64);
-        metrics::histogram!("personhog_coordination_plan_ops")
-            .record((guards.len() + ops.len()) as f64);
+        metrics::histogram!("personhog_coordination_plan_ops", "list" => "guards")
+            .record(guards.len() as f64);
+        metrics::histogram!("personhog_coordination_plan_ops", "list" => "ops")
+            .record(ops.len() as f64);
 
         let txn = Txn::new().when(guards).and_then(ops);
         let resp = self.inner.txn(txn).await?;
