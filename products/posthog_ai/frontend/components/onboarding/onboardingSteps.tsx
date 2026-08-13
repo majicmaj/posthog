@@ -23,8 +23,8 @@ export interface OnboardingStep {
     /** Stands in for the clip until one is recorded, and gives each step a face of its own either way. */
     icon: JSX.Element
     /**
-     * Absent until the clip is recorded, in which case the step's media panel shows `icon` instead. Add
-     * `{ src: '/static/posthog-ai-onboarding/<key>.mp4', poster: '…jpg' }` once each clip lands in
+     * Absent when a step has no clip, in which case the media panel shows `icon` instead. The clips are
+     * recorded from Storybook by `clips/recordClips.mjs` and live in
      * `frontend/public/posthog-ai-onboarding/`.
      */
     media?: OnboardingStepMediaSpec
@@ -44,6 +44,7 @@ export const DEFAULT_ONBOARDING_STEPS: readonly OnboardingStep[] = [
         eyebrow: 'Ask',
         headline: 'Ask in plain language and see the query it ran',
         body: 'Ask about signups, conversion, retention, or anything else in your data, and get the insight back with the query it ran in the open. It covers every PostHog product now, up from 7 in the previous version.',
+        media: { src: '/static/posthog-ai-onboarding/ask.mp4', poster: '/static/posthog-ai-onboarding/ask.jpg' },
     },
     {
         key: 'delegate',
@@ -51,6 +52,10 @@ export const DEFAULT_ONBOARDING_STEPS: readonly OnboardingStep[] = [
         eyebrow: 'Delegate',
         headline: 'Hand it real work',
         body: 'Give it a job with more than one step, like auditing your event tracking or fixing the bug behind an error spike. It writes a plan, you approve it, and it works in the background while results land in your inbox.',
+        media: {
+            src: '/static/posthog-ai-onboarding/delegate.mp4',
+            poster: '/static/posthog-ai-onboarding/delegate.jpg',
+        },
     },
     {
         key: 'skills',
@@ -58,6 +63,7 @@ export const DEFAULT_ONBOARDING_STEPS: readonly OnboardingStep[] = [
         eyebrow: 'Skills',
         headline: 'Teach it how your team works',
         body: 'Skills are reusable instructions the agent follows every time: your metric definitions, naming conventions, the weekly report format. Create them in PostHog, or keep them in your repo so they stay versioned and reviewable.',
+        media: { src: '/static/posthog-ai-onboarding/skills.mp4', poster: '/static/posthog-ai-onboarding/skills.jpg' },
     },
     // Connect sits directly before the starter prompts: it is the one step with lasting value, and one of
     // those prompts ends in a pull request when GitHub is connected.
@@ -67,6 +73,10 @@ export const DEFAULT_ONBOARDING_STEPS: readonly OnboardingStep[] = [
         eyebrow: 'Connect',
         headline: 'Connect GitHub, so it can read how your events actually fire',
         body: 'With GitHub connected it grounds answers in what your product really does, reviews and fixes your PostHog instrumentation, and opens any change it recommends as a pull request. If you already use PostHog Code, you are most likely set up.',
+        media: {
+            src: '/static/posthog-ai-onboarding/connect.mp4',
+            poster: '/static/posthog-ai-onboarding/connect.jpg',
+        },
     },
     {
         key: 'start',
@@ -74,6 +84,7 @@ export const DEFAULT_ONBOARDING_STEPS: readonly OnboardingStep[] = [
         eyebrow: 'Start',
         headline: 'Start with something real',
         body: 'The same agent is in this chat, in Slack, in PostHog Code, and behind the MCP. Pick a question below and it will start right away.',
+        media: { src: '/static/posthog-ai-onboarding/start.mp4', poster: '/static/posthog-ai-onboarding/start.jpg' },
     },
 ]
 

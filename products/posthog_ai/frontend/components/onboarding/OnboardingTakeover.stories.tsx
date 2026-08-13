@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { Button } from '@posthog/quill-primitives'
 
-import { DEFAULT_ONBOARDING_STEPS, DEFAULT_STARTER_PROMPTS, type OnboardingStep } from './onboardingSteps'
+import { DEFAULT_ONBOARDING_STEPS, DEFAULT_STARTER_PROMPTS } from './onboardingSteps'
 import { OnboardingTakeover, type OnboardingTakeoverProps } from './OnboardingTakeover'
 
 // Logic-free and controlled — the story owns the step index, exactly as `AiOnboardingImpl` does. The dialog
@@ -74,25 +74,13 @@ export const StartStep: Story = {
     },
 }
 
-const STEP_WITH_MEDIA: OnboardingStep = {
-    ...DEFAULT_ONBOARDING_STEPS[0],
-    media: { src: '/static/posthog-ai-onboarding/meet.mp4', poster: '/static/posthog-ai-onboarding/meet.jpg' },
-}
-
 /**
- * A step once its clip has been recorded. The clip occupies exactly the box the glyph held, so nothing in
- * the dialog moves when a recording lands.
+ * The one step with no clip. Its media panel holds the step's own glyph in exactly the box a clip would
+ * occupy, so the dialog is the same size either way.
  */
-export const WithMedia: Story = {
-    args: { steps: [STEP_WITH_MEDIA], stepIndex: 0 },
-    // The clip loops indefinitely, so the visual-regression runner would wait forever for it to settle.
-    tags: ['test-skip'],
-}
-
-/** Every step before its clip exists: the media panel holds the step's own glyph. This is what ships today. */
 export const AwaitingClip: Story = {
     args: {
         steps: DEFAULT_ONBOARDING_STEPS,
-        stepIndex: DEFAULT_ONBOARDING_STEPS.findIndex((step) => step.key === 'delegate'),
+        stepIndex: DEFAULT_ONBOARDING_STEPS.findIndex((step) => step.key === 'meet'),
     },
 }

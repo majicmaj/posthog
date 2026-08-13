@@ -34,10 +34,9 @@ describe('OnboardingTakeover', () => {
         expect(screen.getByText('What changed this week?')).toBeInTheDocument()
     })
 
-    // The manifest ships with no media so the dialog can merge before the clips are recorded. A <video> with
-    // an undefined src would show alpha users a broken player, and dropping the panel entirely would resize
-    // the dialog the day a clip lands.
-    it('holds the media panel with the step glyph until a clip is recorded', () => {
+    // Not every step has a clip, and steps can be overridden by the host. A <video> with an undefined src
+    // would show a broken player, and dropping the panel entirely would resize the dialog between steps.
+    it('holds the media panel with the step glyph for a step with no clip', () => {
         render(
             <OnboardingTakeover
                 open
