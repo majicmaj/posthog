@@ -4792,6 +4792,8 @@ async fn a_handoff_cancelled_mid_warm_reaches_the_pod_still_warming() {
 /// what the test turns on.
 #[tokio::test]
 async fn healthy_terms_between_outages_keep_the_coordinator_alive() {
+    const COORDINATOR: &str = "resetting-coordinator";
+
     let proxy = FlakyProxy::start("127.0.0.1:2379").await;
     let prefix = format!("/test-coordinator-resets-{}/", uuid::Uuid::new_v4());
     let store = store_at(&proxy.endpoint, &prefix).await;
@@ -4800,7 +4802,7 @@ async fn healthy_terms_between_outages_keep_the_coordinator_alive() {
     let coordinator = Coordinator::new(
         Arc::clone(&store),
         CoordinatorConfig {
-            name: "resetting-coordinator".to_string(),
+            name: COORDINATOR.to_string(),
             election_retry_interval: Duration::from_millis(50),
             run_retry_backoff: Duration::from_millis(10),
             reconcile_interval: Duration::from_millis(100),
@@ -4814,34 +4816,25 @@ async fn healthy_terms_between_outages_keep_the_coordinator_alive() {
     let token = cancel.clone();
     let mut running = tokio::spawn(async move { coordinator.run(token).await });
 
-    for outage in 0..3 {
-        // Wait until this coordinator holds the election, which means a
-        // term is running and its reconcile tick — the applied-work
-        // signal — has fired at least once.
-        let check = Arc::clone(&direct);
-        wait_for_condition_named(
-            WAIT_TIMEOUT,
-            POLL_INTERVAL,
-            "the coordinator to lead",
-            || {
-                let store = Arc::clone(&check);
-                async move {
-                    store
-                        .get_leader()
-                        .await
-                        .map(|leader| leader.is_some_and(|l| l.holder == "resetting-coordinator"))
-                        .unwrap_or(false)
-                }
-            },
-        )
-        .await;
-        tokio::time::sleep(Duration::from_millis(250)).await;
+    // A term is identified by its election lease: winning grants a fresh
+    // one. Waiting on the id to change is what separates a new term from
+    // the previous term's key still sitting there, which the holder name
+    // alone cannot do — and severing against that stale key lands the
+    // next outage in the middle of a recovery rather than after it.
+    let mut term = await_new_term(&direct, COORDINATOR, None).await;
 
-        proxy.sever();
+    for outage in 0..3 {
+        // Let the new term's reconcile tick — the applied-work signal
+        // the budget resets on — fire. It runs every 100ms, so this
+        // window holds about ten of them.
+        tokio::time::sleep(Duration::from_secs(1)).await;
         assert!(
             !running.is_finished(),
             "outage {outage} must not end the run while healthy terms separate the failures"
         );
+
+        proxy.sever();
+        term = await_new_term(&direct, COORDINATOR, Some(term)).await;
     }
 
     // More outages than the budget have now passed, each with a healthy
@@ -4853,4 +4846,19 @@ async fn healthy_terms_between_outages_keep_the_coordinator_alive() {
     );
 
     cancel.cancel();
+}
+
+/// Block until `name` holds the election under a lease other than
+/// `previous`, and return that lease id.
+async fn await_new_term(store: &PersonhogStore, name: &str, previous: Option<i64>) -> i64 {
+    let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        if let Ok(Some(leader)) = store.get_leader().await {
+            if leader.holder == name && Some(leader.lease_id) != previous {
+                return leader.lease_id;
+            }
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    panic!("timed out waiting for a coordinator term newer than {previous:?}");
 }
