@@ -79,6 +79,15 @@ pub struct PersonhogStore {
     inner: EtcdStore,
 }
 
+/// Counts store calls by the method that made them. The shared etcd
+/// layer labels by primitive — `get`, `list_with_revision` — which is
+/// too coarse to attribute load: a single `get` label covers the
+/// coordinator's handoff read, a pod's convergence read, and every
+/// other single-key lookup in the system.
+fn count_call(site: &'static str) {
+    metrics::counter!("personhog_coordination_store_calls_total", "site" => site).increment(1);
+}
+
 impl PersonhogStore {
     pub fn new(inner: EtcdStore) -> Self {
         Self { inner }
@@ -119,6 +128,7 @@ impl PersonhogStore {
     }
 
     pub async fn list_pods(&self) -> Result<Vec<RegisteredPod>> {
+        count_call("list_pods");
         let key = self.key(StoreKey::PodsPrefix);
         Ok(self.inner.list(&key).await?)
     }
@@ -172,6 +182,7 @@ impl PersonhogStore {
     }
 
     pub async fn list_routers(&self) -> Result<Vec<RegisteredRouter>> {
+        count_call("list_routers");
         let key = self.key(StoreKey::RoutersPrefix);
         Ok(self.inner.list(&key).await?)
     }
@@ -189,11 +200,13 @@ impl PersonhogStore {
     // ── Assignment operations ───────────────────────────────────
 
     pub async fn get_assignment(&self, partition: u32) -> Result<Option<PartitionAssignment>> {
+        count_call("get_assignment");
         let key = self.key(StoreKey::Assignment(partition));
         Ok(self.inner.get(&key).await?)
     }
 
     pub async fn list_assignments(&self) -> Result<Vec<PartitionAssignment>> {
+        count_call("list_assignments");
         let key = self.key(StoreKey::AssignmentsPrefix);
         Ok(self.inner.list(&key).await?)
     }
@@ -237,11 +250,13 @@ impl PersonhogStore {
     // ── Handoff operations ──────────────────────────────────────
 
     pub async fn get_handoff(&self, partition: u32) -> Result<Option<HandoffState>> {
+        count_call("get_handoff");
         let key = self.key(StoreKey::Handoff(partition));
         Ok(self.inner.get(&key).await?)
     }
 
     pub async fn list_handoffs(&self) -> Result<Vec<HandoffState>> {
+        count_call("list_handoffs");
         let key = self.key(StoreKey::HandoffsPrefix);
         Ok(self.inner.list(&key).await?)
     }
@@ -395,6 +410,7 @@ impl PersonhogStore {
     // ── Freeze ack operations (router -> coordinator) ────────────
 
     pub async fn put_freeze_ack(&self, ack: &RouterFreezeAck) -> Result<()> {
+        count_call("put_freeze_ack");
         let key = self.key(StoreKey::FreezeAck {
             partition: ack.partition,
             router: &ack.router_name,
@@ -407,6 +423,7 @@ impl PersonhogStore {
     }
 
     pub async fn list_freeze_acks(&self, partition: u32) -> Result<Vec<RouterFreezeAck>> {
+        count_call("list_freeze_acks");
         let key = self.key(StoreKey::FreezeAcksForPartition(partition));
         Ok(self.inner.list(&key).await?)
     }
@@ -429,6 +446,7 @@ impl PersonhogStore {
     // ── Drained ack operations (old owner -> coordinator) ────────
 
     pub async fn put_drained_ack(&self, ack: &PodDrainedAck) -> Result<()> {
+        count_call("put_drained_ack");
         let key = self.key(StoreKey::DrainedAck {
             partition: ack.partition,
             pod: &ack.pod_name,
@@ -441,6 +459,7 @@ impl PersonhogStore {
     }
 
     pub async fn list_drained_acks(&self, partition: u32) -> Result<Vec<PodDrainedAck>> {
+        count_call("list_drained_acks");
         let key = self.key(StoreKey::DrainedAcksForPartition(partition));
         Ok(self.inner.list(&key).await?)
     }
@@ -463,6 +482,7 @@ impl PersonhogStore {
     // ── Warmed ack operations (new owner -> coordinator) ─────────
 
     pub async fn put_warmed_ack(&self, ack: &PodWarmedAck) -> Result<()> {
+        count_call("put_warmed_ack");
         let key = self.key(StoreKey::WarmedAck {
             partition: ack.partition,
             pod: &ack.pod_name,
@@ -475,6 +495,7 @@ impl PersonhogStore {
     }
 
     pub async fn list_warmed_acks(&self, partition: u32) -> Result<Vec<PodWarmedAck>> {
+        count_call("list_warmed_acks");
         let key = self.key(StoreKey::WarmedAcksForPartition(partition));
         Ok(self.inner.list(&key).await?)
     }
@@ -545,15 +566,22 @@ impl PersonhogStore {
             Vec::with_capacity(handoffs.len() + replacements.len() + preconditions.len());
         let mut ops: Vec<TxnOp> =
             Vec::with_capacity(assignments.len() + handoffs.len() + replacements.len() * 4);
+        // A plan is one gRPC request and one raft entry, so its size is
+        // bounded by etcd's `--max-request-bytes` however small the
+        // individual records are. Both terms scale with the fleet, so
+        // they are measured rather than assumed.
+        let mut plan_bytes = 0usize;
 
         for a in assignments {
             let key = self.key(StoreKey::Assignment(a.partition));
             let value = serde_json::to_vec(a)?;
+            plan_bytes += key.len() + value.len();
             ops.push(TxnOp::put(key, value, None));
         }
         for h in handoffs {
             let key = self.key(StoreKey::Handoff(h.partition));
             let value = serde_json::to_vec(h)?;
+            plan_bytes += key.len() + value.len();
             // A key that was never created has create_revision 0 — the
             // canonical etcd existence guard.
             guards.push(Compare::create_revision(key.clone(), CompareOp::Equal, 0));
@@ -564,6 +592,7 @@ impl PersonhogStore {
             let partition = r.handoff.partition;
             let key = self.key(StoreKey::Handoff(partition));
             let value = serde_json::to_vec(&r.handoff)?;
+            plan_bytes += key.len() + value.len();
             guards.push(Compare::mod_revision(
                 key.clone(),
                 CompareOp::Equal,
@@ -598,6 +627,10 @@ impl PersonhogStore {
                 }
             }
         }
+
+        metrics::histogram!("personhog_coordination_plan_bytes").record(plan_bytes as f64);
+        metrics::histogram!("personhog_coordination_plan_ops")
+            .record((guards.len() + ops.len()) as f64);
 
         let txn = Txn::new().when(guards).and_then(ops);
         let resp = self.inner.txn(txn).await?;

@@ -53,6 +53,20 @@ impl Drop for OpTimer {
     }
 }
 
+/// Bytes moved by one etcd operation, keys included. Payload size is the
+/// axis on which coordination outgrows its store — etcd caps a request at
+/// `--max-request-bytes`, and a record whose size scales with fleet size
+/// crosses that limit long before op counts or latency show strain — so
+/// it is measured next to duration rather than inferred from it.
+fn record_payload_bytes(op: &'static str, bytes: usize) {
+    metrics::histogram!("assignment_coordination_etcd_payload_bytes", "op" => op)
+        .record(bytes as f64);
+}
+
+fn kvs_bytes(kvs: &[etcd_client::KeyValue]) -> usize {
+    kvs.iter().map(|kv| kv.key().len() + kv.value().len()).sum()
+}
+
 impl EtcdStore {
     pub async fn connect(config: StoreConfig) -> Result<Self> {
         // Transport-level liveness so a silent network partition fails
@@ -97,11 +111,14 @@ impl EtcdStore {
     pub async fn get_raw(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let _t = OpTimer::new("get_raw");
         let resp = self.client.clone().get(key, None).await?;
+        record_payload_bytes("get_raw", kvs_bytes(resp.kvs()));
         Ok(resp.kvs().first().map(|kv| kv.value().to_vec()))
     }
 
     pub async fn put_raw(&self, key: &str, value: impl Into<Vec<u8>>) -> Result<()> {
         let _t = OpTimer::new("put_raw");
+        let value = value.into();
+        record_payload_bytes("put_raw", key.len() + value.len());
         self.client.clone().put(key, value, None).await?;
         Ok(())
     }
@@ -111,6 +128,7 @@ impl EtcdStore {
     pub async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
         let _t = OpTimer::new("get");
         let resp = self.client.clone().get(key, None).await?;
+        record_payload_bytes("get", kvs_bytes(resp.kvs()));
         match resp.kvs().first() {
             Some(kv) => Ok(Some(serde_json::from_slice(kv.value())?)),
             None => Ok(None),
@@ -120,6 +138,7 @@ impl EtcdStore {
     pub async fn get_versioned<T: DeserializeOwned>(&self, key: &str) -> Result<Option<(T, i64)>> {
         let _t = OpTimer::new("get_versioned");
         let resp = self.client.clone().get(key, None).await?;
+        record_payload_bytes("get_versioned", kvs_bytes(resp.kvs()));
         match resp.kvs().first() {
             Some(kv) => {
                 let value = serde_json::from_slice(kv.value())?;
@@ -141,6 +160,7 @@ impl EtcdStore {
     ) -> Result<Option<(T, i64)>> {
         let _t = OpTimer::new("get_with_mod_revision");
         let resp = self.client.clone().get(key, None).await?;
+        record_payload_bytes("get_with_mod_revision", kvs_bytes(resp.kvs()));
         match resp.kvs().first() {
             Some(kv) => {
                 let value = serde_json::from_slice(kv.value())?;
@@ -166,6 +186,7 @@ impl EtcdStore {
         let _t = OpTimer::new("list_with_revision");
         let options = GetOptions::new().with_prefix();
         let resp = self.client.clone().get(prefix, Some(options)).await?;
+        record_payload_bytes("list_with_revision", kvs_bytes(resp.kvs()));
         let revision = resp.header().map(|h| h.revision()).unwrap_or(0);
         let items = resp
             .kvs()
@@ -185,6 +206,7 @@ impl EtcdStore {
         let _t = OpTimer::new("list_with_mod_revisions");
         let options = GetOptions::new().with_prefix();
         let resp = self.client.clone().get(prefix, Some(options)).await?;
+        record_payload_bytes("list_with_mod_revisions", kvs_bytes(resp.kvs()));
         resp.kvs()
             .iter()
             .map(|kv| Ok((serde_json::from_slice(kv.value())?, kv.mod_revision())))
@@ -212,6 +234,7 @@ impl EtcdStore {
     ) -> Result<()> {
         let _t = OpTimer::new("put");
         let value = serde_json::to_string(value)?;
+        record_payload_bytes("put", key.len() + value.len());
         let options = lease_id.map(|id| PutOptions::new().with_lease(id));
         self.client.clone().put(key, value, options).await?;
         Ok(())
@@ -289,11 +312,13 @@ impl EtcdStore {
         &self,
         lease_id: i64,
     ) -> Result<(etcd_client::LeaseKeeper, etcd_client::LeaseKeepAliveStream)> {
+        let _t = OpTimer::new("keep_alive");
         let (keeper, stream) = self.client.clone().lease_keep_alive(lease_id).await?;
         Ok((keeper, stream))
     }
 
     pub async fn revoke_lease(&self, lease_id: i64) -> Result<()> {
+        let _t = OpTimer::new("revoke_lease");
         self.client.clone().lease_revoke(lease_id).await?;
         Ok(())
     }
