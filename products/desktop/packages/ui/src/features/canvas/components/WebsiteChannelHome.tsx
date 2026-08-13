@@ -30,12 +30,7 @@ import {
 import { useChannelsLayout } from "@posthog/ui/features/canvas/hooks/useChannelsLayout";
 import { useChannelTaskMutations } from "@posthog/ui/features/canvas/hooks/useChannelTasks";
 import { useFolderInstructions } from "@posthog/ui/features/canvas/hooks/useFolderInstructions";
-import {
-  DEFAULT_REPORT_SPACE_NAME,
-  useReportSpace,
-} from "@posthog/ui/features/canvas/hooks/useReportSpace";
 import { useTaskChannels } from "@posthog/ui/features/canvas/hooks/useTaskChannels";
-import { ReportSessions } from "@posthog/ui/features/canvas/reports/ReportSessionsList";
 import { useThreadPanelStore } from "@posthog/ui/features/canvas/stores/threadPanelStore";
 import { SuggestedPromptCard } from "@posthog/ui/features/task-detail/components/SuggestedPromptCard";
 import { taskDetailQuery } from "@posthog/ui/features/tasks/queries";
@@ -60,11 +55,6 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
   const { channels, isLoading: isLoadingChannels } = useTaskChannels();
   const channel = channels.find((c) => c.id === channelId);
   const channelName = channel?.name;
-  const { reportSpaceId } = useReportSpace();
-  const isReportSpace =
-    channelId === reportSpaceId ||
-    (channel?.channel_type === "public" &&
-      channelName === DEFAULT_REPORT_SPACE_NAME);
   const { fileTask } = useChannelTaskMutations();
 
   // Poll while empty so the intro's context.md card flips to "created" when
@@ -243,16 +233,15 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
       : isBuildingContextMd
         ? "building"
         : "none";
-  const intro = isReportSpace ? (
-    <ReportSessions channelId={channelId} />
-  ) : !isPersonal && channelName && channel ? (
-    <ChannelIntro
-      channel={channel}
-      channelName={channelName}
-      contextMdState={contextMdState}
-      onCreateContextMd={() => setContextMdDialogOpen(true)}
-    />
-  ) : undefined;
+  const intro =
+    !isPersonal && channelName && channel ? (
+      <ChannelIntro
+        channel={channel}
+        channelName={channelName}
+        contextMdState={contextMdState}
+        onCreateContextMd={() => setContextMdDialogOpen(true)}
+      />
+    ) : undefined;
 
   const emptyState = (
     <div className="mx-auto flex min-h-full w-full max-w-[680px] flex-col justify-center gap-6 px-4 py-10">
@@ -295,7 +284,7 @@ export function WebsiteChannelHome({ channelId }: { channelId: string }) {
           channelId={channelId}
           tasks={tasks}
           pending={visiblePending}
-          systemMessages={isReportSpace ? undefined : systemMessages}
+          systemMessages={systemMessages}
           isLoading={isLoading}
           emptyState={emptyState}
           intro={intro}
