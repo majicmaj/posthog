@@ -4454,3 +4454,77 @@ async fn a_standby_waits_on_the_leader_key_rather_than_campaigning() {
         .expect("the waiting task must not panic")
         .expect("watching the leader key must succeed");
 }
+
+/// A handoff replaced in place — cancelled and re-issued in one
+/// transaction — must still reach a pod the successor no longer names.
+///
+/// A replacement overwrites the handoff key rather than deleting it, so
+/// the old owner sees a single put whose payload names two other pods.
+/// Nothing in that payload says the fence this pod is holding should
+/// come off, and only the local fence does. A pod that skipped the event
+/// would keep rejecting writes for a partition the durable state still
+/// assigns to it, until the reconcile tick noticed.
+#[tokio::test]
+async fn a_replaced_handoff_reaches_the_old_owner_it_no_longer_names() {
+    let store = test_store("handoff-replaced-old-owner").await;
+    let cancel = CancellationToken::new();
+
+    let pod = start_pod(Arc::clone(&store), "replaced-pod-a", cancel.clone());
+
+    let check_store = Arc::clone(&store);
+    wait_for_condition(WAIT_TIMEOUT, POLL_INTERVAL, || {
+        let store = Arc::clone(&check_store);
+        async move {
+            store
+                .list_pods()
+                .await
+                .map(|pods| pods.iter().any(|p| p.pod_name == "replaced-pod-a"))
+                .unwrap_or(false)
+        }
+    })
+    .await;
+
+    // Take ownership of partition 0 through the real acquisition path, so
+    // the assignment names this pod.
+    put_handoff(&store, 0, None, "replaced-pod-a", HandoffPhase::Warming).await;
+    wait_for_event(&pod.events, HandoffEvent::Warmed(0)).await;
+    let warming = store
+        .get_handoff(0)
+        .await
+        .expect("get handoff")
+        .expect("handoff exists");
+    assert!(
+        store
+            .complete_handoff(0, &warming.handoff_id, HandoffPhase::Warming)
+            .await
+            .expect("complete"),
+        "complete_handoff must succeed"
+    );
+    store.delete_handoff(0).await.expect("cleanup");
+
+    // Move the partition away, leaving this pod drained and fenced.
+    put_handoff(
+        &store,
+        0,
+        Some("replaced-pod-a"),
+        "replaced-pod-b",
+        HandoffPhase::Draining,
+    )
+    .await;
+    wait_for_event(&pod.events, HandoffEvent::Drained(0)).await;
+
+    // The successor is written over the same key and names neither this
+    // pod nor anything it holds. The assignment still names it, so it
+    // must resume rather than stay fenced.
+    put_handoff(
+        &store,
+        0,
+        Some("replaced-pod-b"),
+        "replaced-pod-c",
+        HandoffPhase::Freezing,
+    )
+    .await;
+    wait_for_event(&pod.events, HandoffEvent::Resumed(0)).await;
+
+    cancel.cancel();
+}

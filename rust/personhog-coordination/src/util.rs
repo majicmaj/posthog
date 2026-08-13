@@ -250,6 +250,19 @@ pub async fn run_lease_keepalive(
 /// drown the signal. Same-cluster clocks make millisecond skew
 /// negligible for the diagnostic purpose; records stamped by
 /// pre-instrumentation writers (zero) are skipped.
+/// Count a handoff watch event by whether it reached a convergence.
+/// The skipped share says how much of the fan-out this pod is not
+/// party to, and a skipped rate of zero during a rebalance means the
+/// scoping is not taking effect.
+pub fn record_handoff_event_disposition(converged: bool) {
+    let disposition = if converged { "converged" } else { "skipped" };
+    metrics::counter!(
+        "personhog_coordination_handoff_events_total",
+        "disposition" => disposition
+    )
+    .increment(1);
+}
+
 pub fn record_phase_watch_delivery(
     observer: &'static str,
     phase: crate::types::HandoffPhase,

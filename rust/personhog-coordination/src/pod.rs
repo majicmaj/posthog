@@ -1023,6 +1023,16 @@ impl PodHandle {
         Ok((partitions, rev_a.min(rev_h)))
     }
 
+    /// Whether this pod still holds something for the partition: a warm
+    /// cache or a write fence. Local state outlives the durable record
+    /// that created it, which is what makes a pod care about a handoff
+    /// that no longer names it — a cancellation leaves the old owner
+    /// fenced, and only the fence says so.
+    async fn holds_local_state(&self, partition: u32) -> bool {
+        self.warmed_partitions.lock().await.contains_key(&partition)
+            || self.fenced_partitions.lock().await.contains(&partition)
+    }
+
     /// Re-derive and apply the desired state for one partition from fresh
     /// point reads. Every watch event is just a signal to look again —
     /// convergence acts on observed durable state, never on remembered
@@ -1474,6 +1484,14 @@ impl PodHandle {
                 msg = stream.message() => {
                     let resp = msg?.ok_or_else(|| Error::invalid_state("handoff watch stream ended".to_string()))?;
                     for event in resp.events() {
+                        // Every pod watches every handoff, so a fleet-wide
+                        // rebalance delivers one event per partition to
+                        // every pod. Converging on all of them costs two
+                        // point reads each, and all but one pod's are
+                        // answered by state that cannot have changed for
+                        // it. Convergence still reads durable state
+                        // rather than trusting the payload; the payload
+                        // only decides whether to look.
                         let partition = match event.event_type() {
                             EventType::Put => match parse_watch_value::<HandoffState>(event) {
                                 Ok(handoff) => {
@@ -1482,18 +1500,35 @@ impl PodHandle {
                                         handoff.phase,
                                         handoff.phase_entered_at_ms,
                                     );
-                                    Some(handoff.partition)
+                                    let pod = &self.config.pod_name;
+                                    let named = handoff.old_owner.as_deref() == Some(pod.as_str())
+                                        || handoff.new_owner == *pod;
+                                    if named || self.holds_local_state(handoff.partition).await {
+                                        Some(handoff.partition)
+                                    } else {
+                                        None
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::error!(pod = %self.config.pod_name, error = %e, "failed to parse handoff");
                                     None
                                 }
                             },
-                            EventType::Delete => event
+                            // A delete carries no owners, so only local
+                            // state can say whether this pod is involved.
+                            // That is the case that matters: a cancelled
+                            // handoff has to reach the old owner holding
+                            // its fence.
+                            EventType::Delete => match event
                                 .kv()
                                 .and_then(|kv| from_utf8(kv.key()).ok())
-                                .and_then(store::extract_partition_from_key),
+                                .and_then(store::extract_partition_from_key)
+                            {
+                                Some(p) if self.holds_local_state(p).await => Some(p),
+                                _ => None,
+                            },
                         };
+                        util::record_handoff_event_disposition(partition.is_some());
                         if let Some(partition) = partition {
                             dispatch(
                                 self,
