@@ -3799,6 +3799,7 @@ export interface ErrorTrackingBreakdownsQuery extends DataNode<ErrorTrackingBrea
     issueId: ErrorTrackingIssue['id']
     breakdownProperties: string[]
     dateRange?: DateRange
+    filterGroup?: PropertyGroupFilter
     filterTestAccounts?: boolean
     maxValuesPerProperty?: integer
 }
