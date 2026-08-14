@@ -342,7 +342,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     name: config.pod_name.clone(),
                     leader_lease_ttl: config.coordinator_lease_ttl,
                     keepalive_interval: config.coordinator_keepalive_interval(),
-                    election_retry_interval: config.coordinator_election_retry_interval(),
                     rebalance_debounce_interval: config.coordinator_rebalance_debounce_interval(),
                     reconcile_interval: config.coordinator_reconcile_interval(),
                     handoff_deadline: config.coordinator_handoff_deadline(),
@@ -444,12 +443,12 @@ fn install_metrics_recorder() -> PrometheusHandle {
     // "4.7s" regardless of the real value. The top still reaches far
     // past the handoff deadline so a stall is never collapsed into
     // +Inf.
-    // Coordination payload sizes: the top boundaries straddle etcd's
-    // --max-request-bytes (1.5 MiB plus gRPC overhead) so a plan or a
-    // list creeping toward the limit is visible before etcd starts
-    // rejecting it. The default ladder tops out at 10_000, which every
-    // plan past a couple of dozen partitions clears in one step.
-    const COORDINATION_SIZE_BUCKETS_BYTES: &[f64] = &[
+    // Must stay equal to `common_metrics::ETCD_PAYLOAD_SIZE_BUCKETS_BYTES`,
+    // which every binary using the shared recorder gets. This binary
+    // builds its own, and the router does not depend on that crate — but
+    // the metric is emitted by the store layer in both, so one name with
+    // two ladders across jobs cannot be aggregated.
+    const ETCD_PAYLOAD_SIZE_BUCKETS_BYTES: &[f64] = &[
         1024.0, 8192.0, 65536.0, 262144.0, 524288.0, 1048576.0, 1572864.0, 2097152.0, 4194304.0,
     ];
     const HANDOFF_PHASE_BUCKETS: &[f64] = &[
@@ -473,12 +472,12 @@ fn install_metrics_recorder() -> PrometheusHandle {
         .expect("valid buckets")
         .set_buckets_for_metric(
             Matcher::Full("personhog_coordination_plan_bytes".into()),
-            COORDINATION_SIZE_BUCKETS_BYTES,
+            ETCD_PAYLOAD_SIZE_BUCKETS_BYTES,
         )
         .expect("valid buckets")
         .set_buckets_for_metric(
             Matcher::Full("assignment_coordination_etcd_payload_bytes".into()),
-            COORDINATION_SIZE_BUCKETS_BYTES,
+            ETCD_PAYLOAD_SIZE_BUCKETS_BYTES,
         )
         .unwrap()
         .set_buckets_for_metric(

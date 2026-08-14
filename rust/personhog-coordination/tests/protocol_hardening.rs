@@ -4893,3 +4893,54 @@ async fn the_sweep_spares_a_membership_a_live_handoff_refers_to() {
 
     cancel.cancel();
 }
+
+/// A coordinator that cannot reach etcd keeps trying, and still stops
+/// promptly when asked to.
+///
+/// It has no budget: coordination fails over to a peer for free on every
+/// term ending, a restart cannot mend an unwell etcd, and the process it
+/// would take down also serves person writes and strong reads. So the
+/// contract is retry-and-report, and both halves matter — a coordinator
+/// that gave up would shed routing capacity during an etcd event, and
+/// one that ignored cancellation would hold shutdown past its grace
+/// period.
+#[tokio::test]
+async fn a_coordinator_that_cannot_reach_etcd_keeps_trying_and_still_stops_on_request() {
+    let proxy = FlakyProxy::start("127.0.0.1:2379").await;
+    let prefix = format!("/test-coordinator-retries-{}/", uuid::Uuid::new_v4());
+    // Connect while the proxy is healthy: the failure under test is a
+    // connection that dies later, not one that never opened.
+    let store = store_at(&proxy.endpoint, &prefix).await;
+
+    let coordinator = Coordinator::new(
+        Arc::clone(&store),
+        CoordinatorConfig {
+            name: "retrying-coordinator".to_string(),
+            run_retry_backoff: Duration::from_millis(10),
+            ..Default::default()
+        },
+        Arc::new(StickyBalancedStrategy),
+        None,
+    );
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+    let mut running = tokio::spawn(async move { coordinator.run(token).await });
+
+    proxy.set_blackholed(true);
+    proxy.sever();
+
+    // Long enough that a coordinator with any budget at this backoff
+    // would have spent it many times over.
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), &mut running)
+            .await
+            .is_err(),
+        "an unreachable etcd must not make the coordinator give up"
+    );
+
+    cancel.cancel();
+    tokio::time::timeout(WAIT_TIMEOUT, running)
+        .await
+        .expect("cancellation must stop the coordinator promptly")
+        .expect("the coordinator task must not panic");
+}

@@ -145,11 +145,11 @@ pub fn start_coordinator_with_deadline(
             name: name.to_string(),
             leader_lease_ttl,
             keepalive_interval: Duration::from_secs(keepalive_secs),
-            election_retry_interval: Duration::from_secs(1),
             // Short enough that a failover never waits on the leader-key
             // watch alone.
             standby_poll_interval: Duration::from_millis(500),
             run_retry_backoff: Duration::from_millis(10),
+            backoff_decay_window: Duration::from_secs(300),
             rebalance_debounce_interval: Duration::from_millis(100),
             reconcile_interval: Duration::from_millis(500),
             // Callers default this to a day: these tests deliberately

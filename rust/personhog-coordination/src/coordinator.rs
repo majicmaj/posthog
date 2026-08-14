@@ -31,18 +31,20 @@ pub struct CoordinatorConfig {
     pub name: String,
     pub leader_lease_ttl: i64,
     pub keepalive_interval: Duration,
-    /// How long to wait after abdicating before campaigning again.
-    /// Abdication shares the run count with every other term ending, so
-    /// a flap escalates; this is what keeps it from spinning at etcd
-    /// speed in the meantime.
-    pub election_retry_interval: Duration,
-
     /// How long a standby candidate waits on its leader-key watch before
     /// re-reading the key. The watch is what normally wakes a candidate;
     /// this is the bound on how long a stalled one can hide an opening.
     pub standby_poll_interval: Duration,
 
     pub run_retry_backoff: Duration,
+    /// How long without a bad ending before the pace starts over.
+    ///
+    /// Paces only — nothing escalates, so this decides how fast the
+    /// coordinator recovers, not whether it survives. Without it the
+    /// count never falls, so a bad spell in the morning leaves every
+    /// candidate at the cap, and an isolated failure that evening costs
+    /// the cap instead of the base while the cluster sits leaderless.
+    pub backoff_decay_window: Duration,
     /// How long to wait after the first pod event before rebalancing, to batch
     /// rapid pod registrations into a single rebalance.
     pub rebalance_debounce_interval: Duration,
@@ -101,7 +103,7 @@ impl Default for CoordinatorConfig {
             leader_lease_ttl: 5,
             keepalive_interval: Duration::from_secs(1),
             // Paces abdication, which has no backoff of its own.
-            election_retry_interval: Duration::from_secs(1),
+
             // How long a standby trusts its watch before re-reading the
             // leader key. This bounds the leaderless window if a watch
             // ever stalls without erroring, and it is the only etcd
@@ -112,6 +114,7 @@ impl Default for CoordinatorConfig {
             // budget buys the same tolerance everywhere: ten consecutive
             // failures span minutes rather than seconds.
             run_retry_backoff: Duration::from_millis(500),
+            backoff_decay_window: Duration::from_secs(300),
             rebalance_debounce_interval: Duration::from_secs(1),
             reconcile_interval: Duration::from_secs(5),
             handoff_deadline: Duration::from_secs(120),
@@ -233,7 +236,8 @@ impl Coordinator {
         // retrying at the cap, and an isolated failure long after a bad
         // spell waits the cap once — an order of magnitude inside the
         // handoff deadline it sits within.
-        let mut consecutive_failures = 0u32;
+        let mut consecutive_endings = 0u32;
+        let mut last_ending: Option<Instant> = None;
         loop {
             if cancel.is_cancelled() {
                 return;
@@ -271,31 +275,27 @@ impl Coordinator {
                     // bootstrap to lead for a renewal margin and stop —
                     // is visible as the flap it is.
                     counter!("personhog_coordination_abdications_total").increment(1);
-                    // `try_lead` revoked on the way out, so the key this
-                    // candidate would wait on is already gone and it
-                    // would otherwise re-campaign at etcd speed.
-                    if self
-                        .pace(&cancel, self.config.election_retry_interval)
-                        .await
-                    {
+                    // Paced like any other bad ending. `try_lead` revoked
+                    // on the way out, so the key this candidate would
+                    // wait on is already gone; without a growing pace a
+                    // lease that cannot renew flaps at a fixed rate
+                    // forever, and no term lasts long enough to move a
+                    // handoff through its phases.
+                    let wait = self.pace_after_ending(&mut consecutive_endings, &mut last_ending);
+                    if self.wait_or_shutdown(&cancel, wait).await {
                         return;
                     }
+                    drop(e);
                 }
                 Err(e) => {
-                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    let wait = self.pace_after_ending(&mut consecutive_endings, &mut last_ending);
                     util::record_run_failure(
                         "coordinator",
                         &self.config.name,
-                        consecutive_failures,
+                        consecutive_endings,
                         &e,
                     );
-                    const BACKOFF_CAP: Duration = Duration::from_secs(15);
-                    let backoff = self
-                        .config
-                        .run_retry_backoff
-                        .saturating_mul(2u32.saturating_pow(consecutive_failures.saturating_sub(1)))
-                        .min(BACKOFF_CAP);
-                    if self.pace(&cancel, backoff).await {
+                    if self.wait_or_shutdown(&cancel, wait).await {
                         return;
                     }
                 }
@@ -303,8 +303,30 @@ impl Coordinator {
         }
     }
 
+    /// How long to wait before campaigning again after a term ended
+    /// badly, growing while they keep arriving.
+    ///
+    /// Both bad endings share one pace: an abdication and a failed
+    /// attempt cost the same bootstrap and want the same restraint, and
+    /// keeping one counter means neither can be slowed by the other's
+    /// history in a way the code does not say out loud.
+    fn pace_after_ending(&self, consecutive: &mut u32, last: &mut Option<Instant>) -> Duration {
+        const BACKOFF_CAP: Duration = Duration::from_secs(15);
+        let quiet = last.is_none_or(|at| at.elapsed() >= self.config.backoff_decay_window);
+        *last = Some(Instant::now());
+        *consecutive = if quiet {
+            1
+        } else {
+            consecutive.saturating_add(1)
+        };
+        self.config
+            .run_retry_backoff
+            .saturating_mul(2u32.saturating_pow(consecutive.saturating_sub(1)))
+            .min(BACKOFF_CAP)
+    }
+
     /// Wait, or report that shutdown arrived first.
-    async fn pace(&self, cancel: &CancellationToken, delay: Duration) -> bool {
+    async fn wait_or_shutdown(&self, cancel: &CancellationToken, delay: Duration) -> bool {
         tokio::select! {
             _ = cancel.cancelled() => true,
             _ = tokio::time::sleep(delay) => false,
@@ -835,7 +857,6 @@ impl Coordinator {
                     // read is not a candidate at all.
                     let quorum_candidates = store.list_freeze_quorum_ids().await;
                     let handoffs = store.list_handoffs().await?;
-                    Self::collect_stale_freeze_quorums(&store, quorum_candidates, &handoffs).await;
                     for handoff in &handoffs {
                         Self::handle_handoff_update_static(&store, handoff).await?;
                         Self::check_phase_advance(&store, handoff.partition, AdvanceTrigger::Other)
@@ -854,6 +875,13 @@ impl Coordinator {
                     // drift of any cause. Cancellation itself is a
                     // planning decision — the planner replaces a doomed
                     // handoff with whatever resolves its stashes.
+                    // Housekeeping, so it waits behind advancement for
+                    // the same reason the gauge refresh does: only the
+                    // two reads above need their order, and its deletes
+                    // are one round trip per orphan that a read-only
+                    // etcd turns into a per-tick tax paid before any
+                    // handoff moves.
+                    Self::collect_stale_freeze_quorums(&store, quorum_candidates, &handoffs).await;
                     replan.notify_one();
                     // The gauge refresh is best-effort and runs after the
                     // reconcile pass: its reads exist only for metrics and

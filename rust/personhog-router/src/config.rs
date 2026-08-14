@@ -274,10 +274,6 @@ pub struct Config {
     #[envconfig(default = "1")]
     pub coordinator_keepalive_secs: u64,
 
-    /// Retry interval between a standby candidate's election campaigns.
-    #[envconfig(default = "1")]
-    pub coordinator_election_retry_secs: u64,
-
     /// Debounce interval (ms) for batching pod events before rebalancing
     #[envconfig(default = "1000")]
     pub coordinator_rebalance_debounce_ms: u64,
@@ -588,10 +584,6 @@ impl Config {
 
     pub fn coordinator_keepalive_interval(&self) -> Duration {
         Duration::from_secs(self.coordinator_keepalive_secs)
-    }
-
-    pub fn coordinator_election_retry_interval(&self) -> Duration {
-        Duration::from_secs(self.coordinator_election_retry_secs)
     }
 
     pub fn coordinator_rebalance_debounce_interval(&self) -> Duration {

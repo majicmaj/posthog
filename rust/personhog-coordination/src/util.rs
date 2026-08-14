@@ -353,6 +353,15 @@ pub fn preregister_coordinator_metrics() {
     metrics::counter!("personhog_coordination_elections_won_total").increment(0);
     metrics::counter!("personhog_coordination_election_campaigns_total").increment(0);
     metrics::counter!("personhog_coordination_abdications_total").increment(0);
+    metrics::counter!("personhog_coordination_freeze_quorum_sweep_failures_total").increment(0);
+    // The coordinator's whole escalation story is this series, and its
+    // failures arrive in correlated bursts with quiet days between —
+    // exactly the delta a lazily-registered counter loses.
+    metrics::counter!(
+        "personhog_coordination_run_restarts_total",
+        "component" => "coordinator"
+    )
+    .increment(0);
     metrics::counter!("personhog_coordination_unresolved_freeze_quorums_total").increment(0);
     metrics::counter!("personhog_coordination_partition_releases_total").increment(0);
     // Burst-shaped: these fire only during a mass cancellation, which is

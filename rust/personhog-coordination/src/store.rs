@@ -797,13 +797,32 @@ impl PersonhogStore {
     ) -> Result<Option<Vec<String>>> {
         match &handoff.freeze_quorum_ref {
             Some(id) => {
-                if let Some(members) = self
+                // A cache hit answers from a record that may since have
+                // been deleted — by a sweep that should have spared it,
+                // which is the failure `unresolved_freeze_quorums_total`
+                // exists to surface. Confirm against etcd when the id is
+                // one this process cached, so the counter can see it.
+                let cached = self
                     .freeze_quorums
                     .lock()
                     .expect("freeze quorum cache lock poisoned")
                     .get(id)
-                {
-                    return Ok(Some(members.clone()));
+                    .cloned();
+                if let Some(members) = cached {
+                    if self.get_freeze_quorum(id).await?.is_some() {
+                        return Ok(Some(members));
+                    }
+                    crate::util::record_unresolved_freeze_quorum();
+                    tracing::warn!(
+                        partition = handoff.partition,
+                        quorum_id = %id,
+                        "freeze quorum record is gone though it was read before; requiring every live router"
+                    );
+                    self.freeze_quorums
+                        .lock()
+                        .expect("freeze quorum cache lock poisoned")
+                        .remove(id);
+                    return Ok(None);
                 }
                 let members = self.get_freeze_quorum(id).await?;
                 if let Some(members) = &members {
