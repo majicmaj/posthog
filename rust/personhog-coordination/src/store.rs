@@ -100,7 +100,7 @@ pub struct PersonhogStore {
 /// too coarse to attribute load: a single `get` label covers the
 /// coordinator's handoff read, a pod's convergence read, and every
 /// other single-key lookup in the system.
-fn count_call(site: &'static str) {
+pub(crate) fn count_call(site: &'static str) {
     metrics::counter!("personhog_coordination_store_calls_total", "site" => site).increment(1);
 }
 

@@ -32,13 +32,18 @@ pub struct EtcdStore {
 /// Records one etcd operation's wall time on drop, so every return path
 /// (including errors) lands in the histogram. Includes this layer's
 /// (de)serialization, which is negligible next to the etcd round trip.
-struct OpTimer {
+///
+/// Public so an operation driven outside this store still lands in the
+/// same histogram: a lease renewal runs off the `LeaseKeeper` this store
+/// handed out, never through a method here, and it is the highest-rate
+/// etcd call the fleet makes.
+pub struct OpTimer {
     op: &'static str,
     start: std::time::Instant,
 }
 
 impl OpTimer {
-    fn new(op: &'static str) -> Self {
+    pub fn new(op: &'static str) -> Self {
         Self {
             op,
             start: std::time::Instant::now(),

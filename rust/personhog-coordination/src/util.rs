@@ -205,6 +205,13 @@ pub async fn run_lease_keepalive(
             // response would credit the round-trip delay to the lease.
             let sent = Instant::now();
             let round = async {
+                // Renewals never pass through the store, so without this
+                // the fleet's highest-rate etcd call is absent from both
+                // the call attribution and the op-duration histogram —
+                // and after this crate stopped candidates polling the
+                // election, renewals are what is left at the top.
+                crate::store::count_call("keep_alive_renewal");
+                let _t = assignment_coordination::store::OpTimer::new("keep_alive_renewal");
                 keeper.keep_alive().await?;
                 match stream.message().await? {
                     // Stream end is a connection fact, not a lease fact:
