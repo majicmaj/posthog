@@ -47,7 +47,34 @@ pub(crate) fn note_run_failure(
     name: &str,
     err: &Error,
 ) -> bool {
-    if progress.swap(false, Ordering::SeqCst) {
+    note_run_failure_after(
+        consecutive,
+        progress.swap(false, Ordering::SeqCst),
+        budget,
+        component,
+        name,
+        err,
+    )
+}
+
+/// `note_run_failure` with the reset decided by the caller.
+///
+/// Applied work is the right evidence for a component that always has
+/// work — a pod and a router are serving continuously, so a stretch
+/// without any is itself a symptom. It is the wrong evidence for one
+/// that legitimately idles: the coordinator applies nothing for hours on
+/// a settled cluster, and a count that only applied work could clear
+/// would climb on unrelated failures until it killed a healthy process.
+/// That component passes a decay instead.
+pub(crate) fn note_run_failure_after(
+    consecutive: &mut u32,
+    reset: bool,
+    budget: u32,
+    component: &'static str,
+    name: &str,
+    err: &Error,
+) -> bool {
+    if reset {
         *consecutive = 1;
     } else {
         *consecutive += 1;
@@ -243,13 +270,6 @@ pub async fn run_lease_keepalive(
     }
 }
 
-/// Records how long a handoff phase write took to reach this observer's
-/// watch stream. Only the non-terminal phases are recorded — those are
-/// the writes whose propagation gates protocol progress, while Complete
-/// puts (including cancellation reaffirms) arrive in floods that would
-/// drown the signal. Same-cluster clocks make millisecond skew
-/// negligible for the diagnostic purpose; records stamped by
-/// pre-instrumentation writers (zero) are skipped.
 /// Count a freeze-quorum reference that resolved to no record. The
 /// handoff falls back to requiring every live router, so a nonzero rate
 /// explains a handoff that is slower to advance than its membership
@@ -258,12 +278,13 @@ pub fn record_unresolved_freeze_quorum() {
     metrics::counter!("personhog_coordination_unresolved_freeze_quorums_total").increment(1);
 }
 
-/// Count a handoff watch event by whether it reached a convergence.
-/// The skipped share says how much of the fan-out this pod is not
-/// party to, and a skipped rate of zero during a rebalance means the
-/// scoping is not taking effect.
-pub fn record_handoff_event_disposition(converged: bool) {
-    let disposition = if converged { "converged" } else { "skipped" };
+/// Count a handoff watch event by what this pod did with it. The
+/// skipped share says how much of the fan-out this pod is not party to,
+/// and a skipped rate of zero during a rebalance means the scoping is
+/// not taking effect — so an event the pod could not read must not land
+/// there, or a fleet whose records this binary cannot parse reads as
+/// scoping working perfectly.
+pub fn record_handoff_event_disposition(disposition: &'static str) {
     metrics::counter!(
         "personhog_coordination_handoff_events_total",
         "disposition" => disposition
@@ -271,6 +292,13 @@ pub fn record_handoff_event_disposition(converged: bool) {
     .increment(1);
 }
 
+/// Records how long a handoff phase write took to reach this observer's
+/// watch stream. Only the non-terminal phases are recorded — those are
+/// the writes whose propagation gates protocol progress, while Complete
+/// puts (including cancellation reaffirms) arrive in floods that would
+/// drown the signal. Same-cluster clocks make millisecond skew
+/// negligible for the diagnostic purpose; records stamped by
+/// pre-instrumentation writers (zero) are skipped.
 pub fn record_phase_watch_delivery(
     observer: &'static str,
     phase: crate::types::HandoffPhase,
@@ -314,6 +342,7 @@ pub fn preregister_coordinator_metrics() {
     }
     metrics::counter!("personhog_coordination_elections_won_total").increment(0);
     metrics::counter!("personhog_coordination_election_campaigns_total").increment(0);
+    metrics::counter!("personhog_coordination_unresolved_freeze_quorums_total").increment(0);
     metrics::counter!("personhog_coordination_partition_releases_total").increment(0);
     metrics::gauge!("personhog_coordination_generation_hold_pods").set(0.0);
     metrics::gauge!("personhog_coordination_generation_capped_pods").set(0.0);
@@ -322,7 +351,7 @@ pub fn preregister_coordinator_metrics() {
 /// Same as [`preregister_coordinator_metrics`], for the counters a
 /// writer pod's coordination layer emits.
 pub fn preregister_pod_metrics() {
-    for disposition in ["converged", "skipped"] {
+    for disposition in ["converged", "skipped", "unreadable"] {
         metrics::counter!(
             "personhog_coordination_handoff_events_total",
             "disposition" => disposition
@@ -417,5 +446,81 @@ mod tests {
     fn new_handoff_id_is_unique_within_same_instant() {
         let ids: HashSet<String> = (0..1000).map(|_| new_handoff_id()).collect();
         assert_eq!(ids.len(), 1000);
+    }
+}
+
+#[cfg(test)]
+mod decay_tests {
+    use super::note_run_failure_after;
+    use crate::error::Error;
+
+    /// A quiet window ends the run, so the next failure counts from one.
+    ///
+    /// Without this, a fleet-wide etcd blip — a few failures per pod,
+    /// then a quiet day — accumulates one blip at a time until an
+    /// unrelated series of them restarts a healthy router. The count has
+    /// to measure an unbroken run, not a lifetime.
+    #[test]
+    fn a_quiet_window_starts_the_count_again() {
+        let err = Error::invalid_state("watch stream ended");
+        let mut consecutive = 0u32;
+
+        // One blip: three failures with no quiet between them.
+        for _ in 0..3 {
+            assert!(note_run_failure_after(
+                &mut consecutive,
+                false,
+                5,
+                "coordinator",
+                "c",
+                &err
+            ));
+        }
+        assert_eq!(consecutive, 3, "an unbroken run accumulates");
+
+        // A quiet window, then another blip of the same size.
+        for expected in 1..=3 {
+            let quiet = expected == 1;
+            assert!(note_run_failure_after(
+                &mut consecutive,
+                quiet,
+                5,
+                "coordinator",
+                "c",
+                &err
+            ));
+            assert_eq!(
+                consecutive, expected,
+                "the second blip must count from one, not carry the first"
+            );
+        }
+    }
+
+    /// The decay must not rescue a run that never goes quiet.
+    #[test]
+    fn an_unbroken_run_still_exhausts_the_budget() {
+        let err = Error::invalid_state("apply_plan rejected");
+        let mut consecutive = 0u32;
+
+        assert!(note_run_failure_after(
+            &mut consecutive,
+            true,
+            3,
+            "coordinator",
+            "c",
+            &err
+        ));
+        assert!(note_run_failure_after(
+            &mut consecutive,
+            false,
+            3,
+            "coordinator",
+            "c",
+            &err
+        ));
+        assert!(
+            !note_run_failure_after(&mut consecutive, false, 3, "coordinator", "c", &err),
+            "failures that never stop arriving must still exhaust the budget"
+        );
     }
 }
