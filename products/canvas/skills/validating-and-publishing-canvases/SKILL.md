@@ -38,6 +38,9 @@ then dies in the rendered canvas. Declare:
 - `capabilities.posthog.insights` — every insight short id the canvas passes to `ph.loadInsight`.
 - `capabilities.posthog.captureEvents` — every event name it passes to `ph.capture`.
 - `capabilities.posthog.inlineQueries: true` — when it calls `ph.query` at all.
+- `capabilities.network.origins` — each exact HTTPS origin used by `fetch` or `XMLHttpRequest`.
+  Do not include paths, credentials, queries, fragments, or wildcards. Data sent to a declared
+  origin leaves PostHog and appears in the capability review before promotion.
 
 Validation rejects undeclared literal calls (`capability_missing_*` diagnostics) so you can fix
 them before publishing; dynamic ids it can only warn about, so keep the declarations complete.
@@ -49,13 +52,13 @@ Diagnostics carry `severity`, a stable `code`, a `message`, and (for file-specif
 `path` and `line`:
 
 - `error` diagnostics block publishing — fix all of them. Common ones: `import_not_allowed`
-  (bare imports are limited to react, react-dom, @posthog/quill, recharts, lucide-react, and dayjs),
+  (bare imports are limited to the dependencies returned in the source project),
   `forbidden_dynamic_import` / `forbidden_require` / `forbidden_inline_script`,
   `invalid_path`, `capability_missing_insight` / `capability_missing_capture_event` /
   `capability_missing_inline_queries`,
   `dependency_not_admitted` / `dependency_version_mismatch`, and path/size violations.
 - `warning` diagnostics don't block, but heed them: `network_fetch` / `network_xhr` mean the code
-  reaches for the network directly — the sandbox will block it at runtime; use the `ph` bridge.
+  reaches for the network directly. Declare the exact HTTPS origin or use the `ph` bridge.
 
 ## Publish guarded
 
