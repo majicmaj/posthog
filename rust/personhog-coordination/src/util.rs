@@ -406,8 +406,9 @@ mod tests {
 
     /// Losing the election lease ends a leadership term but says nothing
     /// about this process's health — a successor takes over and
-    /// reconciles. Counting abdications toward the failure budget would
-    /// restart routers for the protocol working as designed.
+    /// reconciles. The coordinator's run loop tells the two apart on
+    /// this predicate: an abdication is paced and counted, an error is
+    /// paced and reported, and neither ends the process.
     #[test]
     fn an_abdication_is_not_a_process_failure() {
         assert!(Error::leadership_lost().is_leadership_lost());
@@ -415,27 +416,28 @@ mod tests {
         assert!(!Error::NotFound("handoffs/7".to_string()).is_leadership_lost());
     }
 
-    /// The budget exists for a failure that repeats forever, so it must
-    /// survive a campaign that succeeds in between: without the progress
-    /// reset, sporadic errors spread over hours would eventually restart
-    /// a healthy standby.
+    /// Applied work has to clear the count, or sporadic errors spread
+    /// over hours add up to a restart of a healthy component. This is
+    /// the pod's and router's supervisor — both serve continuously, so a
+    /// stretch with no applied work is itself a symptom. The coordinator
+    /// does not use it: it idles legitimately, and it never gives up.
     #[test]
-    fn a_completed_campaign_clears_the_failure_count() {
+    fn applied_work_clears_the_failure_count() {
         let progress = AtomicBool::new(false);
         let err = Error::invalid_state("etcd unreachable");
         let mut consecutive = 0u32;
 
         for attempt in 1..3 {
             assert!(
-                note_run_failure(&mut consecutive, &progress, 3, "coordinator", "c", &err),
+                note_run_failure(&mut consecutive, &progress, 3, "pod", "p", &err),
                 "attempt {attempt} is within budget"
             );
         }
 
         progress.store(true, Ordering::SeqCst);
         assert!(
-            note_run_failure(&mut consecutive, &progress, 3, "coordinator", "c", &err),
-            "a completed campaign resets the count"
+            note_run_failure(&mut consecutive, &progress, 3, "pod", "p", &err),
+            "applied work resets the count"
         );
         assert_eq!(consecutive, 1);
     }
@@ -453,12 +455,12 @@ mod tests {
             &mut consecutive,
             &progress,
             2,
-            "coordinator",
-            "c",
+            "pod",
+            "p",
             &err
         ));
         assert!(
-            !note_run_failure(&mut consecutive, &progress, 2, "coordinator", "c", &err),
+            !note_run_failure(&mut consecutive, &progress, 2, "pod", "p", &err),
             "the budget is spent, so the caller must stop retrying"
         );
     }
