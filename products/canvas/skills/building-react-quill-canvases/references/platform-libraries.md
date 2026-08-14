@@ -3,18 +3,18 @@
 The canvas builder pins ten optional libraries. Choose the smallest one that matches the job and
 keep the dependency map returned by `canvas-source-retrieve` unchanged.
 
-| Library | Use it for | Main capabilities |
-| --- | --- | --- |
-| `d3` | Bespoke data visualization | Scales, shapes, layouts, geographic projections, interpolation, and SVG helpers |
-| `three` | 3D and WebGL scenes | Cameras, geometry, materials, lighting, animation, and raycasting |
-| `framer-motion` | Coordinated React animation | Enter and exit transitions, layout animation, gestures, springs, and reduced-motion handling |
-| `zod` | Runtime data validation | Schemas, parsing, coercion, transformations, unions, and typed validation errors |
-| `@tanstack/react-table` | Complex data tables | Sorting, filtering, grouping, pagination, selection, and column state |
-| `@tanstack/react-virtual` | Large tables and lists | Windowed rows and columns, dynamic measurements, scrolling, and overscan |
-| `react-hook-form` | Multi-field forms | Field registration, validation, dirty state, controlled inputs, and submission state |
-| `lodash-es` | Data transformation | Grouping, ordering, deduplication, aggregation, object selection, and collection helpers |
-| `react-markdown` | Safe Markdown presentation | Markdown parsing into React elements without `dangerouslySetInnerHTML` |
-| `papaparse` | CSV input and output | CSV parsing, header mapping, type conversion, malformed-row reporting, and CSV generation |
+| Library                   | Use it for                  | Main capabilities                                                                            |
+| ------------------------- | --------------------------- | -------------------------------------------------------------------------------------------- |
+| `d3`                      | Bespoke data visualization  | Scales, shapes, layouts, geographic projections, interpolation, and SVG helpers              |
+| `three`                   | 3D and WebGL scenes         | Cameras, geometry, materials, lighting, animation, and raycasting                            |
+| `framer-motion`           | Coordinated React animation | Enter and exit transitions, layout animation, gestures, springs, and reduced-motion handling |
+| `zod`                     | Runtime data validation     | Schemas, parsing, coercion, transformations, unions, and typed validation errors             |
+| `@tanstack/react-table`   | Complex data tables         | Sorting, filtering, grouping, pagination, selection, and column state                        |
+| `@tanstack/react-virtual` | Large tables and lists      | Windowed rows and columns, dynamic measurements, scrolling, and overscan                     |
+| `react-hook-form`         | Multi-field forms           | Field registration, validation, dirty state, controlled inputs, and submission state         |
+| `lodash-es`               | Data transformation         | Grouping, ordering, deduplication, aggregation, object selection, and collection helpers     |
+| `react-markdown`          | Safe Markdown presentation  | Markdown parsing into React elements without `dangerouslySetInnerHTML`                       |
+| `papaparse`               | CSV input and output        | CSV parsing, header mapping, type conversion, malformed-row reporting, and CSV generation    |
 
 ## Selection guidance
 
