@@ -24428,6 +24428,10 @@ class AccountsTableQuery(BaseModel):
         default=None,
         description=("Filters are combined with AND. Values within tag and assignment filters use OR."),
     )
+    includeChurned: bool | None = Field(
+        default=None,
+        description="Include churned accounts. Churned accounts are hidden by default.",
+    )
     kind: Literal["AccountsTableQuery"] = "AccountsTableQuery"
     limit: conint(ge=1) | None = None
     metrics: (
