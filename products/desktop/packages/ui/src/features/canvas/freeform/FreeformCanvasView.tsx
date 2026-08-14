@@ -549,13 +549,28 @@ export function FreeformCanvasView({
   const requestAgent = useMutation(
     trpc.dashboards.requestAgent.mutationOptions(),
   );
-  const [agentRequestPrompt, setAgentRequestPrompt] = useState<string | null>(
-    null,
-  );
+  // The prompt is bound to the canvas that issued it: FreeformCanvasView is
+  // reused across navigation, so a dialog approved after switching canvases
+  // must not submit the old prompt against the newly selected canvas.
+  const [agentRequest, setAgentRequest] = useState<{
+    prompt: string;
+    dashboardId: string;
+  } | null>(null);
   const agentRequestPromiseRef = useRef<{
     resolve: (value: unknown) => void;
     reject: (reason: Error) => void;
   } | null>(null);
+  const dashboardIdRef = useRef(dashboardId);
+  useEffect(() => {
+    dashboardIdRef.current = dashboardId;
+    if (agentRequestPromiseRef.current) {
+      agentRequestPromiseRef.current.reject(
+        new Error("Agent request canceled: the canvas changed"),
+      );
+      agentRequestPromiseRef.current = null;
+      setAgentRequest(null);
+    }
+  }, [dashboardId]);
   const onDataRequest = useCallback(
     (method: string, payload: unknown) => {
       if (method !== "agentRequest") {
@@ -565,7 +580,10 @@ export function FreeformCanvasView({
       if (agentRequestPromiseRef.current) {
         throw new Error("Another agent request is awaiting approval");
       }
-      setAgentRequestPrompt(input.prompt);
+      setAgentRequest({
+        prompt: input.prompt,
+        dashboardId: dashboardIdRef.current,
+      });
       return new Promise<unknown>((resolve, reject) => {
         agentRequestPromiseRef.current = { resolve, reject };
       });
@@ -575,7 +593,7 @@ export function FreeformCanvasView({
   const cancelAgentRequest = useCallback(() => {
     agentRequestPromiseRef.current?.reject(new Error("Agent request canceled"));
     agentRequestPromiseRef.current = null;
-    setAgentRequestPrompt(null);
+    setAgentRequest(null);
   }, []);
   useEffect(
     () => () => {
@@ -588,14 +606,14 @@ export function FreeformCanvasView({
   );
   const confirmAgentRequest = useCallback(async () => {
     const pending = agentRequestPromiseRef.current;
-    if (!pending || agentRequestPrompt === null) return;
+    if (!pending || agentRequest === null) return;
     try {
       const result = await requestAgent.mutateAsync({
-        id: dashboardId,
-        prompt: agentRequestPrompt,
+        id: agentRequest.dashboardId,
+        prompt: agentRequest.prompt,
       });
       pending.resolve(result);
-      setAgentRequestPrompt(null);
+      setAgentRequest(null);
       agentRequestPromiseRef.current = null;
       toast.success(
         result.requestOutcome === "reported"
@@ -604,13 +622,13 @@ export function FreeformCanvasView({
       );
     } catch (error) {
       pending.reject(error instanceof Error ? error : new Error(String(error)));
-      setAgentRequestPrompt(null);
+      setAgentRequest(null);
       agentRequestPromiseRef.current = null;
       toast.error("Couldn't start the agent run", {
         description: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [agentRequestPrompt, dashboardId, requestAgent]);
+  }, [agentRequest, requestAgent]);
 
   // Dedupes the runtime-error capture without a store dependency: reading
   // runtimeError in the callbacks would change their identity on every
@@ -760,7 +778,7 @@ export function FreeformCanvasView({
   return (
     <Flex height="100%" overflow="hidden" position="relative">
       <CanvasAgentRequestDialog
-        prompt={agentRequestPrompt}
+        prompt={agentRequest?.prompt ?? null}
         loading={requestAgent.isPending}
         onCancel={cancelAgentRequest}
         onConfirm={() => void confirmAgentRequest()}
