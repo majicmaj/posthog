@@ -1,6 +1,8 @@
 import json
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
+from freezegun import freeze_time
 from posthog.test.base import BaseTest
 from unittest.mock import patch
 
@@ -25,6 +27,11 @@ from products.conversations.backend.models import (
     EmailThread,
     EmailThreadMessage,
     Ticket,
+)
+from products.conversations.backend.services.email_channel_setup import (
+    FORWARDING_CHALLENGE_HEADER,
+    FORWARDING_CHALLENGE_MARKER,
+    create_forwarding_challenge,
 )
 
 
@@ -118,6 +125,92 @@ class TestCustomerEmailIngestion(BaseTest):
         assert not EmailThread.objects.for_team(self.team.id).exists()
         assert not Ticket.objects.filter(team=self.team).exists()
         assert not EmailOutboxMessage.objects.filter(team=self.team).exists()
+
+    @parameterized.expand(["message_headers", "body_html"])
+    def test_forwarding_challenge_activates_pending_channel_and_consumes_retries(self, transport: str) -> None:
+        setup = self._start_google_setup()
+        challenge = create_forwarding_challenge(
+            team_id=self.team.id,
+            channel_id=self.channel.id,
+            setup_id=setup.id,
+        )
+        payload: dict[str, str] = {
+            "from": "PostHog <noreply@posthog.com>",
+            "sender": "noreply@posthog.com",
+            "subject": "Verify email forwarding to PostHog",
+            "body-plain": "PostHog is checking email forwarding.",
+            "stripped-text": "PostHog is checking email forwarding.",
+        }
+        if transport == "message_headers":
+            payload["message-headers"] = json.dumps([[FORWARDING_CHALLENGE_HEADER, challenge.token]])
+        else:
+            payload["body-html"] = f"<p>{FORWARDING_CHALLENGE_MARKER}{challenge.token}</p>"
+
+        first_response = self._post_email(message_id=f"<challenge-{transport}@posthog.com>", **payload)
+        retry_response = self._post_email(message_id=f"<challenge-{transport}-retry@posthog.com>", **payload)
+
+        assert first_response.status_code == 200
+        assert retry_response.status_code == 200
+        self.channel.refresh_from_db()
+        assert self.channel.connection_status == EmailChannelConnectionStatus.ACTIVE
+        assert not EmailChannelSetup.objects.for_team(self.team.id).filter(id=setup.id).exists()
+        assert not EmailThread.objects.for_team(self.team.id).exists()
+        assert not Ticket.objects.filter(team=self.team).exists()
+
+    @parameterized.expand(["wrong_team", "wrong_channel", "wrong_setup"])
+    def test_pending_channel_rejects_signed_challenge_for_another_setup(self, mismatch: str) -> None:
+        setup = self._start_google_setup()
+        challenge = create_forwarding_challenge(
+            team_id=self.team.id + 1 if mismatch == "wrong_team" else self.team.id,
+            channel_id=uuid4() if mismatch == "wrong_channel" else self.channel.id,
+            setup_id=uuid4() if mismatch == "wrong_setup" else setup.id,
+        )
+
+        response = self._post_email(
+            message_id=f"<challenge-{mismatch}@posthog.com>",
+            **{FORWARDING_CHALLENGE_HEADER: challenge.token},
+        )
+
+        assert response.status_code == 200
+        self.channel.refresh_from_db()
+        assert self.channel.connection_status == EmailChannelConnectionStatus.PENDING_CONFIRMATION
+        assert EmailChannelSetup.objects.for_team(self.team.id).filter(id=setup.id).exists()
+        assert not EmailThread.objects.for_team(self.team.id).exists()
+
+    def test_pending_channel_rejects_expired_signed_challenge(self) -> None:
+        with freeze_time("2026-01-01 00:00:00"):
+            setup = self._start_google_setup(expires_at=timezone.now() + timedelta(hours=48))
+            challenge = create_forwarding_challenge(
+                team_id=self.team.id,
+                channel_id=self.channel.id,
+                setup_id=setup.id,
+            )
+
+        with freeze_time("2026-01-02 00:00:01"):
+            response = self._post_email(
+                message_id="<expired-challenge@posthog.com>",
+                **{FORWARDING_CHALLENGE_HEADER: challenge.token},
+            )
+
+        assert response.status_code == 200
+        self.channel.refresh_from_db()
+        assert self.channel.connection_status == EmailChannelConnectionStatus.PENDING_CONFIRMATION
+        assert EmailChannelSetup.objects.for_team(self.team.id).filter(id=setup.id).exists()
+        assert not EmailThread.objects.for_team(self.team.id).exists()
+
+    def test_pending_channel_rejects_unsigned_direct_address_challenge(self) -> None:
+        setup = self._start_google_setup()
+
+        response = self._post_email(
+            message_id="<forged-challenge@attacker.example>",
+            **{FORWARDING_CHALLENGE_HEADER: "forged-token"},
+        )
+
+        assert response.status_code == 200
+        self.channel.refresh_from_db()
+        assert self.channel.connection_status == EmailChannelConnectionStatus.PENDING_CONFIRMATION
+        assert EmailChannelSetup.objects.for_team(self.team.id).filter(id=setup.id).exists()
+        assert not EmailThread.objects.for_team(self.team.id).exists()
 
     def test_pending_channel_accepts_live_mailgun_confirmation_shape(self) -> None:
         setup = self._start_google_setup()

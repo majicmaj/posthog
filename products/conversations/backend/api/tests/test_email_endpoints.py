@@ -222,7 +222,7 @@ class TestEmailChannelPermissions(BaseTest):
         assert disconnect_response.status_code == 200
         assert not EmailChannel.objects.filter(id=channel.id).exists()
 
-    def test_owner_consumes_confirmation_action_and_activates_channel(self) -> None:
+    def test_owner_opens_confirmation_action_without_activating_channel(self) -> None:
         channel = EmailChannel.objects.create(
             team=self.team,
             kind=EmailChannelKind.CUSTOMER_COMMUNICATION,
@@ -254,10 +254,168 @@ class TestEmailChannelPermissions(BaseTest):
             "confirmation_url": "https://mail-settings.google.com/mail/vf-confirmation",
         }
         channel.refresh_from_db()
-        assert channel.connection_status == EmailChannelConnectionStatus.ACTIVE
-        assert not EmailChannelSetup.objects.for_team(self.team.id).filter(id=setup.id).exists()
+        assert channel.connection_status == EmailChannelConnectionStatus.PENDING_CONFIRMATION
+        assert EmailChannelSetup.objects.for_team(self.team.id).filter(id=setup.id).exists()
 
-    def test_non_owner_cannot_consume_confirmation_action(self) -> None:
+    @patch("products.conversations.backend.api.email_settings.is_smtp_email_service_available", return_value=True)
+    @patch("posthog.email.is_email_available", return_value=True)
+    @patch("products.conversations.backend.api.email_settings.EmailMessage.send", autospec=True)
+    def test_owner_sends_forwarding_challenge_only_to_claimed_mailbox(
+        self,
+        mock_send: MagicMock,
+        _mock_email_available: MagicMock,
+        _mock_smtp_available: MagicMock,
+    ) -> None:
+        channel = EmailChannel.objects.create(
+            team=self.team,
+            kind=EmailChannelKind.CUSTOMER_COMMUNICATION,
+            owner=self.user,
+            inbound_token="challenge-token",
+            from_email="claimed-mailbox@example.com",
+            from_name="Customer success",
+            domain="example.com",
+            connection_status=EmailChannelConnectionStatus.PENDING_CONFIRMATION,
+        )
+        setup = EmailChannelSetup.objects.for_team(self.team.id).create(
+            team=self.team,
+            channel=channel,
+            provider=EmailChannelSetupProvider.GOOGLE,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        response = self.client.post(
+            "/api/conversations/v1/email/verify-forwarding",
+            {"config_id": str(channel.id)},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+        mock_send.assert_called_once()
+        message = mock_send.call_args.args[0]
+        challenge_token = message.headers["X-PostHog-Forwarding-Challenge"]
+        assert message.to == [
+            {
+                "recipient": "claimed-mailbox@example.com",
+                "raw_email": "claimed-mailbox@example.com",
+            }
+        ]
+        assert f"posthog-forwarding-challenge:{challenge_token}" in message.html_body
+        assert challenge_token not in str(response.json())
+        assert EmailChannelSetup.objects.for_team(self.team.id).filter(id=setup.id).exists()
+
+    @patch("products.conversations.backend.api.email_settings.is_smtp_email_service_available", return_value=False)
+    def test_forwarding_challenge_requires_transactional_email(self, _mock_smtp_available: MagicMock) -> None:
+        channel = EmailChannel.objects.create(
+            team=self.team,
+            kind=EmailChannelKind.CUSTOMER_COMMUNICATION,
+            owner=self.user,
+            inbound_token="missing-smtp-token",
+            from_email=self.user.email,
+            from_name="Customer success",
+            domain="example.com",
+            connection_status=EmailChannelConnectionStatus.PENDING_CONFIRMATION,
+        )
+        EmailChannelSetup.objects.for_team(self.team.id).create(
+            team=self.team,
+            channel=channel,
+            provider=EmailChannelSetupProvider.GOOGLE,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        response = self.client.post(
+            "/api/conversations/v1/email/verify-forwarding",
+            {"config_id": str(channel.id)},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 503
+        assert response.json() == {"error": "Email verification is not configured on this PostHog instance."}
+
+    @patch("products.conversations.backend.api.email_settings.cache.delete")
+    @patch("products.conversations.backend.api.email_settings.cache.add", return_value=True)
+    @patch("products.conversations.backend.api.email_settings.is_smtp_email_service_available", return_value=True)
+    @patch(
+        "products.conversations.backend.api.email_settings.EmailMessage",
+        side_effect=RuntimeError("queue unavailable"),
+    )
+    def test_forwarding_challenge_enqueue_failure_releases_cooldown(
+        self,
+        _mock_email_message: MagicMock,
+        _mock_smtp_available: MagicMock,
+        _mock_cache_add: MagicMock,
+        mock_cache_delete: MagicMock,
+    ) -> None:
+        channel = EmailChannel.objects.create(
+            team=self.team,
+            kind=EmailChannelKind.CUSTOMER_COMMUNICATION,
+            owner=self.user,
+            inbound_token="enqueue-failure-token",
+            from_email=self.user.email,
+            from_name="Customer success",
+            domain="example.com",
+            connection_status=EmailChannelConnectionStatus.PENDING_CONFIRMATION,
+        )
+        setup = EmailChannelSetup.objects.for_team(self.team.id).create(
+            team=self.team,
+            channel=channel,
+            provider=EmailChannelSetupProvider.GOOGLE,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        response = self.client.post(
+            "/api/conversations/v1/email/verify-forwarding",
+            {"config_id": str(channel.id)},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 502
+        assert response.json() == {"error": "Could not send the verification email. Try again."}
+        mock_cache_delete.assert_called_once_with(f"customer-email-forwarding-challenge:{setup.id}")
+
+    @patch("products.conversations.backend.api.email_settings.cache.add", side_effect=[True, False])
+    @patch("products.conversations.backend.api.email_settings.is_smtp_email_service_available", return_value=True)
+    @patch("products.conversations.backend.api.email_settings.EmailMessage")
+    def test_forwarding_challenge_resend_respects_channel_cooldown(
+        self,
+        mock_email_message: MagicMock,
+        _mock_smtp_available: MagicMock,
+        _mock_cache_add: MagicMock,
+    ) -> None:
+        channel = EmailChannel.objects.create(
+            team=self.team,
+            kind=EmailChannelKind.CUSTOMER_COMMUNICATION,
+            owner=self.user,
+            inbound_token="cooldown-token",
+            from_email=self.user.email,
+            from_name="Customer success",
+            domain="example.com",
+            connection_status=EmailChannelConnectionStatus.PENDING_CONFIRMATION,
+        )
+        EmailChannelSetup.objects.for_team(self.team.id).create(
+            team=self.team,
+            channel=channel,
+            provider=EmailChannelSetupProvider.GOOGLE,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        first_response = self.client.post(
+            "/api/conversations/v1/email/verify-forwarding",
+            {"config_id": str(channel.id)},
+            content_type="application/json",
+        )
+        second_response = self.client.post(
+            "/api/conversations/v1/email/verify-forwarding",
+            {"config_id": str(channel.id)},
+            content_type="application/json",
+        )
+
+        assert first_response.status_code == 200
+        assert second_response.status_code == 429
+        assert mock_email_message.call_count == 1
+
+    @parameterized.expand(["confirm-forwarding", "verify-forwarding"])
+    def test_non_owner_cannot_access_forwarding_setup_action(self, endpoint: str) -> None:
         owner = User.objects.create(email="channel-owner@example.com")
         OrganizationMembership.objects.create(
             organization=self.organization,
@@ -283,7 +441,7 @@ class TestEmailChannelPermissions(BaseTest):
         )
 
         response = self.client.post(
-            "/api/conversations/v1/email/confirm-forwarding",
+            f"/api/conversations/v1/email/{endpoint}",
             {"config_id": str(channel.id)},
             content_type="application/json",
         )
