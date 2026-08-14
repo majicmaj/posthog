@@ -5,10 +5,9 @@ import { Spinner } from '@posthog/lemon-ui'
 
 import { ExceptionAttributes } from 'lib/components/Errors/types'
 import { concatValues } from 'lib/components/Errors/utils'
-import { identifierToHuman } from 'lib/utils/strings'
 
 import { ERROR_TRACKING_ISSUE_SCENE_LOGIC_KEY, issueFiltersLogic } from '../IssueFilters/issueFiltersLogic'
-import { PropertiesTable } from '../PropertiesTable'
+import { ExceptionPropertiesTable } from './ExceptionPropertiesTable'
 
 export type ContextDisplayProps = {
     loading: boolean
@@ -28,7 +27,7 @@ export function ContextDisplay({
     const additionalEntries = Object.entries(additionalProperties)
         .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey, undefined, { sensitivity: 'base' }))
         .map(([key, value]) => ({
-            key: identifierToHuman(key, 'title'),
+            key,
             value,
             filterKey: key,
         }))
@@ -74,8 +73,19 @@ export function ContextDisplay({
                     </div>
                 ))
                 .with(false, () => (
-                    <PropertiesTable
-                        entries={[...exceptionEntries, ...additionalEntries]}
+                    <ExceptionPropertiesTable
+                        sections={[
+                            {
+                                id: 'built-in-exception-properties',
+                                title: 'Built-in properties',
+                                entries: exceptionEntries,
+                            },
+                            {
+                                id: 'custom-exception-properties',
+                                title: 'Custom properties',
+                                entries: additionalEntries,
+                            },
+                        ]}
                         onFilterValue={onFilterValue}
                     />
                 ))

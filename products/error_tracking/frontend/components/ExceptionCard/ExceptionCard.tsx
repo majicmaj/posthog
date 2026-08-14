@@ -6,19 +6,18 @@ import { LemonCard } from '@posthog/lemon-ui'
 
 import { ErrorPropertiesLogicProps, errorPropertiesLogic } from 'lib/components/Errors/errorPropertiesLogic'
 import { ErrorEventType } from 'lib/components/Errors/types'
-import { TZLabel } from 'lib/components/TZLabel'
 import { TabsPrimitive, TabsPrimitiveList, TabsPrimitiveTrigger } from 'lib/ui/TabsPrimitive/TabsPrimitive'
 
+import { ExceptionCardFooter } from './ExceptionCardFooter'
 import { exceptionCardLogic } from './exceptionCardLogic'
 import { PropertiesTab } from './Tabs/PropertiesTab'
 import { SessionTab } from './Tabs/SessionTab'
 import { StackTraceTab } from './Tabs/StackTraceTab'
 
 interface ExceptionCardContentProps {
+    eventId?: string
     timestamp?: string
     label?: JSX.Element
-    /** Hide timestamp and label from the tab bar (e.g. when shown elsewhere on mobile) */
-    hideEventMeta?: boolean
 
     renderStackTraceActions?: () => JSX.Element | null
 }
@@ -58,17 +57,17 @@ export function ExceptionCard({
     return (
         <BindLogic logic={exceptionCardLogic} props={cardLogicProps}>
             <BindLogic logic={errorPropertiesLogic} props={eventProps}>
-                <ExceptionCardContent timestamp={event?.timestamp} {...contentProps} />
+                <ExceptionCardContent eventId={event?.uuid} timestamp={event?.timestamp} {...contentProps} />
             </BindLogic>
         </BindLogic>
     )
 }
 
 function ExceptionCardContent({
+    eventId,
     timestamp,
     renderStackTraceActions,
     label,
-    hideEventMeta,
 }: ExceptionCardContentProps): JSX.Element {
     const { currentTab } = useValues(exceptionCardLogic)
     const { setCurrentTab } = useActions(exceptionCardLogic)
@@ -95,15 +94,13 @@ function ExceptionCardContent({
                                 Session
                             </TabsPrimitiveTrigger>
                         </div>
-                        <div className="w-full flex gap-2 justify-end items-center">
-                            {!hideEventMeta && timestamp && <TZLabel className="text-muted text-xs" time={timestamp} />}
-                            {!hideEventMeta && label}
-                        </div>
+                        <div className="w-full" />
                     </TabsPrimitiveList>
                 </div>
                 <StackTraceTab value="stack_trace" renderActions={renderStackTraceActions} className="flex-1 min-h-0" />
                 <PropertiesTab value="properties" className="flex-1 min-h-0" />
                 <SessionTab value="session" timestamp={timestamp} className="flex-1 min-h-0" />
+                <ExceptionCardFooter eventId={eventId} label={label} timestamp={timestamp} />
             </TabsPrimitive>
         </LemonCard>
     )

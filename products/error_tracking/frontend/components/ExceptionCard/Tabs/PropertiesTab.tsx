@@ -1,18 +1,9 @@
 import { useActions, useValues } from 'kea'
 
-import { IconChevronDown } from '@posthog/icons'
+import { LemonSwitch } from '@posthog/lemon-ui'
 
 import { errorPropertiesLogic } from 'lib/components/Errors/errorPropertiesLogic'
 import { JSONViewer } from 'lib/components/JSONViewer'
-import { ButtonPrimitive } from 'lib/ui/Button/ButtonPrimitives'
-import {
-    DropdownMenu,
-    DropdownMenuCheckboxItem,
-    DropdownMenuContent,
-    DropdownMenuGroup,
-    DropdownMenuItemIndicator,
-    DropdownMenuTrigger,
-} from 'lib/ui/DropdownMenu/DropdownMenu'
 import { TabsPrimitiveContent, TabsPrimitiveContentProps } from 'lib/ui/TabsPrimitive/TabsPrimitive'
 import { cn } from 'lib/utils/css-classes'
 
@@ -24,12 +15,19 @@ export interface PropertiesTabProps extends TabsPrimitiveContentProps {}
 
 export function PropertiesTab({ className, ...props }: PropertiesTabProps): JSX.Element {
     const { properties, exceptionAttributes, additionalProperties } = useValues(errorPropertiesLogic)
-    const { loading, showJSONProperties, showAdditionalProperties } = useValues(exceptionCardLogic)
+    const { loading, showJSONProperties } = useValues(exceptionCardLogic)
+    const { setShowJSONProperties } = useActions(exceptionCardLogic)
 
     return (
         <TabsPrimitiveContent {...props} className={cn('flex flex-col', className)}>
             <SubHeader className="justify-end shrink-0">
-                <ShowDropDownMenu />
+                <LemonSwitch
+                    checked={showJSONProperties}
+                    onChange={setShowJSONProperties}
+                    label="JSON"
+                    size="xsmall"
+                    data-attr="exception-properties-json-switch"
+                />
             </SubHeader>
             <div className="flex-1 min-h-0 overflow-y-auto">
                 {showJSONProperties ? (
@@ -38,50 +36,10 @@ export function PropertiesTab({ className, ...props }: PropertiesTabProps): JSX.
                     <ContextDisplay
                         loading={loading}
                         exceptionAttributes={exceptionAttributes}
-                        additionalProperties={showAdditionalProperties ? additionalProperties : {}}
+                        additionalProperties={additionalProperties}
                     />
                 )}
             </div>
         </TabsPrimitiveContent>
-    )
-}
-
-function ShowDropDownMenu(): JSX.Element {
-    const { showJSONProperties, showAdditionalProperties } = useValues(exceptionCardLogic)
-    const { setShowJSONProperties, setShowAdditionalProperties } = useActions(exceptionCardLogic)
-
-    return (
-        <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-                <ButtonPrimitive size="sm" className="h-[1.4rem] px-2">
-                    Show
-                    <IconChevronDown />
-                </ButtonPrimitive>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-                <DropdownMenuGroup>
-                    <DropdownMenuCheckboxItem
-                        checked={showAdditionalProperties}
-                        onCheckedChange={setShowAdditionalProperties}
-                        asChild
-                    >
-                        <ButtonPrimitive menuItem size="sm">
-                            <DropdownMenuItemIndicator intent="checkbox" />
-                            Additional properties
-                        </ButtonPrimitive>
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem
-                        checked={showJSONProperties}
-                        onCheckedChange={setShowJSONProperties}
-                        asChild
-                    >
-                        <ButtonPrimitive menuItem size="sm">
-                            <DropdownMenuItemIndicator intent="checkbox" />
-                            As JSON
-                        </ButtonPrimitive>
-                    </DropdownMenuCheckboxItem>
-                </DropdownMenuGroup>
-            </DropdownMenuContent>
-        </DropdownMenu>
     )
 }

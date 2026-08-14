@@ -2,7 +2,7 @@ import { useValues } from 'kea'
 
 import { IconListTree } from '@posthog/icons'
 
-import { Text } from 'lib/ui/quill'
+import { Separator, Text } from 'lib/ui/quill'
 
 import { IssueFilterPreviewHeader } from '../IssueFilterPreview/IssueFilterPreviewHeader'
 import { BreakdownDetailsDialog } from './BreakdownDetailsDialog'
@@ -50,16 +50,20 @@ function BreakdownPropertySection({
 }): JSX.Element {
     return (
         <section aria-labelledby={id} className="contents">
-            <Text
-                id={id}
-                size="xxs"
-                variant="muted"
-                weight="semibold"
-                render={<h3 />}
-                className="!mb-0 col-span-2 flex h-10 items-center justify-center px-2.5 text-center uppercase tracking-wide"
-            >
-                {title}
-            </Text>
+            <div className="col-span-2 flex h-10 items-center gap-3 px-2.5">
+                <Separator className="min-w-0 flex-1" />
+                <Text
+                    id={id}
+                    size="xxs"
+                    variant="muted"
+                    weight="semibold"
+                    render={<h3 />}
+                    className="!mb-0 shrink-0 text-center uppercase tracking-wide"
+                >
+                    {title}
+                </Text>
+                <Separator className="min-w-0 flex-1" />
+            </div>
             {properties.map((item) => (
                 <BreakdownsTileButton key={item.property} item={item} />
             ))}

@@ -13,7 +13,6 @@ export interface exceptionCardLogicValues {
     expandedFrameRawIds: Set<string>
     issueId: string
     loading: boolean
-    showAdditionalProperties: boolean
     showJSONProperties: boolean
 }
 
@@ -34,9 +33,6 @@ export interface exceptionCardLogicActions {
     }
     setLoading: (loading: boolean) => {
         loading: boolean
-    }
-    setShowAdditionalProperties: (showProperties: boolean) => {
-        showProperties: boolean
     }
     setShowJSONProperties: (showJSON: boolean) => {
         showJSON: boolean
@@ -65,7 +61,6 @@ export const exceptionCardLogic = kea<exceptionCardLogicType>([
 
     actions({
         setShowJSONProperties: (showJSON: boolean) => ({ showJSON }),
-        setShowAdditionalProperties: (showProperties: boolean) => ({ showProperties }),
         setLoading: (loading: boolean) => ({ loading }),
         setCurrentSessionTab: (tab: string) => ({ tab }),
         setCurrentTab: (tab: string) => ({ tab }),
@@ -95,12 +90,6 @@ export const exceptionCardLogic = kea<exceptionCardLogicType>([
             false,
             {
                 setShowJSONProperties: (_, { showJSON }) => showJSON,
-            },
-        ],
-        showAdditionalProperties: [
-            true,
-            {
-                setShowAdditionalProperties: (_, { showProperties }) => showProperties,
             },
         ],
         loading: [
