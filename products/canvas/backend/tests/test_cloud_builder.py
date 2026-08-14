@@ -374,12 +374,14 @@ bridge.port1.close();
         project = self._project('document.body.textContent = "Hello"')
         project["capabilities"] = {
             "posthog": {"insights": ["abc"], "inlineQueries": False, "captureEvents": ["canvas viewed"]},
-            "network": {"origins": []},
+            "network": {"origins": ["https://api.example.com"]},
         }
 
-        _, manifest, _ = validate_builder_output(run_cloud_builder(project))
+        files, manifest, _ = validate_builder_output(run_cloud_builder(project))
 
         self.assertEqual(manifest["capabilities"], project["capabilities"])
+        html = next(file["content"] for file in files if file["path"] == "index.html")
+        self.assertIn("connect-src https://api.example.com", html)
 
     def test_rejects_unbounded_capabilities(self) -> None:
         project = self._project("")

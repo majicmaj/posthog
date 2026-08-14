@@ -137,6 +137,33 @@ class TestCanvasSourceAdapter(SimpleTestCase):
         self.assertFalse(has_errors(diagnostics))
         self.assertIn("network_fetch", [d["code"] for d in diagnostics])
 
+    @parameterized.expand(
+        [
+            ("http", "http://api.example.com"),
+            ("path", "https://api.example.com/v1"),
+            ("credentials", "https://user:secret@api.example.com"),
+            ("wildcard", "https://*.example.com"),
+        ]
+    )
+    def test_rejects_network_origins_that_are_not_exact_https_origins(self, _name, origin):
+        candidate = project(
+            capabilities={
+                "posthog": {"insights": [], "inlineQueries": False, "captureEvents": []},
+                "network": {"origins": [origin]},
+            }
+        )
+        diagnostics = validate_source_project(candidate)
+        self.assertIn("invalid_network_origin", [d["code"] for d in diagnostics])
+
+    def test_accepts_exact_https_network_origin(self):
+        candidate = project(
+            capabilities={
+                "posthog": {"insights": [], "inlineQueries": False, "captureEvents": []},
+                "network": {"origins": ["https://api.example.com:8443"]},
+            }
+        )
+        self.assertFalse(has_errors(validate_source_project(candidate)))
+
     def test_import_diagnostics_carry_file_and_line(self):
         candidate = project(files={CANVAS_COMPONENT_PATH: CODE + 'import _ from "lodash";'})
         entry = next(d for d in validate_source_project(candidate) if d["code"] == "import_not_allowed")

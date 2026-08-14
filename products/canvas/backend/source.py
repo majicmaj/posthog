@@ -16,6 +16,7 @@ from typing import Any
 
 from products.canvas.backend.contract import (
     allowed_import_specifiers,
+    canonical_network_origin,
     canvas_sdk_version,
     contract_limits,
     platform_dependencies,
@@ -170,6 +171,19 @@ def _line_of(code: str, position: int) -> int:
     return code.count("\n", 0, position) + 1
 
 
+def _validate_network_origin(origin: Any) -> str | None:
+    if not isinstance(origin, str):
+        return "network origins must be strings"
+    canonical = canonical_network_origin(origin)
+    if canonical is None:
+        return (
+            "network origins must be exact HTTPS origins without paths, credentials, queries, fragments, or wildcards"
+        )
+    if origin.rstrip("/") != canonical:
+        return f'network origin must use its canonical form: "{canonical}"'
+    return None
+
+
 def _validate_code_file(path: str, code: str) -> list[dict[str, Any]]:
     diagnostics: list[dict[str, Any]] = []
 
@@ -307,10 +321,10 @@ def validate_source_project(project: dict[str, Any]) -> list[dict[str, Any]]:
     if project.get("entryHtml") not in files:
         diagnostics.append(diagnostic("error", "missing_entry", "entryHtml must name a file present in files"))
     network_origins = ((project.get("capabilities") or {}).get("network") or {}).get("origins") or []
-    if network_origins:
-        diagnostics.append(
-            diagnostic("error", "network_origins_not_supported", "capabilities.network.origins must be empty")
-        )
+    for origin in network_origins:
+        problem = _validate_network_origin(origin)
+        if problem is not None:
+            diagnostics.append(diagnostic("error", "invalid_network_origin", problem))
     if len(files) + len(assets) > limits["maxSourceFiles"]:
         diagnostics.append(
             diagnostic(

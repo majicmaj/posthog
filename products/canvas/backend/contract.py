@@ -11,6 +11,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from django.conf import settings
 
@@ -31,8 +32,34 @@ def allowed_import_specifiers() -> frozenset[str]:
     return frozenset(platform_contract()["allowedImportSpecifiers"])
 
 
-def artifact_csp() -> str:
-    return platform_contract()["csp"]
+def canonical_network_origin(origin: Any) -> str | None:
+    if not isinstance(origin, str):
+        return None
+    try:
+        parsed = urlsplit(origin)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or "*" in parsed.hostname
+    ):
+        return None
+    hostname = f"[{parsed.hostname.lower()}]" if ":" in parsed.hostname else parsed.hostname.lower()
+    return f"https://{hostname}" + (f":{port}" if port is not None else "")
+
+
+def artifact_csp(network_origins: list[str] | None = None) -> str:
+    csp = platform_contract()["csp"]
+    safe_origins = [canonical for origin in network_origins or [] if (canonical := canonical_network_origin(origin))]
+    connect_sources = " ".join(safe_origins) or "'none'"
+    return csp.replace("connect-src 'none'", f"connect-src {connect_sources}")
 
 
 def contract_limits() -> dict[str, int]:
