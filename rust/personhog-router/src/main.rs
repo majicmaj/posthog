@@ -357,9 +357,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tokio::spawn(async move {
                 let _guard = coordinator_handle.process_scope();
-                if let Err(e) = coordinator.run(coordinator_handle.shutdown_token()).await {
-                    coordinator_handle.signal_failure(format!("Coordinator error: {e}"));
-                }
+                // No failure path back into the lifecycle manager on
+                // purpose. Coordination that cannot proceed does not
+                // want this process gone: the election lease is revoked
+                // on every term ending and a peer takes over in
+                // milliseconds, a restart cannot mend an unwell etcd,
+                // and this process is also serving person writes and
+                // strong reads. It retries and reports instead.
+                coordinator.run(coordinator_handle.shutdown_token()).await;
                 k8s_cancel.cancel();
             });
         } else {
@@ -439,6 +444,14 @@ fn install_metrics_recorder() -> PrometheusHandle {
     // "4.7s" regardless of the real value. The top still reaches far
     // past the handoff deadline so a stall is never collapsed into
     // +Inf.
+    // Coordination payload sizes: the top boundaries straddle etcd's
+    // --max-request-bytes (1.5 MiB plus gRPC overhead) so a plan or a
+    // list creeping toward the limit is visible before etcd starts
+    // rejecting it. The default ladder tops out at 10_000, which every
+    // plan past a couple of dozen partitions clears in one step.
+    const COORDINATION_SIZE_BUCKETS_BYTES: &[f64] = &[
+        1024.0, 8192.0, 65536.0, 262144.0, 524288.0, 1048576.0, 1572864.0, 2097152.0, 4194304.0,
+    ];
     const HANDOFF_PHASE_BUCKETS: &[f64] = &[
         50.0, 250.0, 500.0, 1000.0, 1500.0, 2000.0, 3000.0, 5000.0, 7500.0, 10000.0, 15000.0,
         30000.0, 60000.0, 120000.0, 300000.0, 600000.0,
@@ -456,6 +469,16 @@ fn install_metrics_recorder() -> PrometheusHandle {
         .set_buckets_for_metric(
             Matcher::Prefix("personhog_router_response_size".into()),
             RESPONSE_SIZE_BUCKETS,
+        )
+        .expect("valid buckets")
+        .set_buckets_for_metric(
+            Matcher::Full("personhog_coordination_plan_bytes".into()),
+            COORDINATION_SIZE_BUCKETS_BYTES,
+        )
+        .expect("valid buckets")
+        .set_buckets_for_metric(
+            Matcher::Full("assignment_coordination_etcd_payload_bytes".into()),
+            COORDINATION_SIZE_BUCKETS_BYTES,
         )
         .unwrap()
         .set_buckets_for_metric(

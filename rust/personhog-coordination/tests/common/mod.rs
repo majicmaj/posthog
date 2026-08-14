@@ -149,11 +149,7 @@ pub fn start_coordinator_with_deadline(
             // Short enough that a failover never waits on the leader-key
             // watch alone.
             standby_poll_interval: Duration::from_millis(500),
-            failure_budget: 10,
-            // Short so a test that exhausts the budget does not spend
-            // the real backoff doing it.
             run_retry_backoff: Duration::from_millis(10),
-            failure_decay_window: Duration::from_secs(300),
             rebalance_debounce_interval: Duration::from_millis(100),
             reconcile_interval: Duration::from_millis(500),
             // Callers default this to a day: these tests deliberately
@@ -168,7 +164,10 @@ pub fn start_coordinator_with_deadline(
         None,
     );
     let token = cancel.child_token();
-    tokio::spawn(async move { coordinator.run(token).await })
+    tokio::spawn(async move {
+        coordinator.run(token).await;
+        Ok(())
+    })
 }
 
 pub struct PodHandles {
@@ -694,7 +693,10 @@ pub fn start_coordinator_reconcile_parked(
         None,
     );
     let token = cancel.child_token();
-    tokio::spawn(async move { coordinator.run(token).await })
+    tokio::spawn(async move {
+        coordinator.run(token).await;
+        Ok(())
+    })
 }
 
 pub fn start_coordinator_with_debounce(
@@ -713,7 +715,10 @@ pub fn start_coordinator_with_debounce(
         None,
     );
     let token = cancel.child_token();
-    tokio::spawn(async move { coordinator.run(token).await })
+    tokio::spawn(async move {
+        coordinator.run(token).await;
+        Ok(())
+    })
 }
 
 pub fn start_pod_slow(

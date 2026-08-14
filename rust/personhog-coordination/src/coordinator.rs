@@ -42,44 +42,6 @@ pub struct CoordinatorConfig {
     /// this is the bound on how long a stalled one can hide an opening.
     pub standby_poll_interval: Duration,
 
-    /// Failures in one unbroken run before the coordinator gives up and
-    /// lets the process restart.
-    ///
-    /// Giving up is a heavy answer here, and a rare one on purpose. This
-    /// coordinator shares a process with a router that serves person
-    /// writes and strong reads, so exhausting the budget drops serving
-    /// capacity — while the work itself needs no rescuing: every term
-    /// that ends revokes its election lease, and a peer's watch wins the
-    /// election within milliseconds. What a restart buys is loudness, a
-    /// visibly crash-looping pod rather than a counter someone has to
-    /// alert on, and it only buys that for a coordinator stuck on its
-    /// own.
-    ///
-    /// So the budget is sized to sit far above a correlated blip. Dev
-    /// sees etcd disturb the whole fleet at once — a few failures per
-    /// pod inside one window, then nothing for a day — and a threshold a
-    /// blip can reach restarts every leader-mode router simultaneously,
-    /// during an etcd event, which is the worst possible moment to shed
-    /// routing capacity and add re-election load. Paired with the
-    /// backoff, this many failures means minutes of uninterrupted
-    /// failure, which no blip in that record comes close to.
-    pub failure_budget: u32,
-    /// How long a run has to go without failing before its count starts
-    /// again from zero.
-    ///
-    /// Failures arrive in correlated bursts separated by quiet days, so
-    /// without a decay a pod accumulates one burst per day until an
-    /// unrelated series of them adds up to a restart. The window only
-    /// has to separate one burst from the next: far above the backoff
-    /// cap, so an unbroken run never decays mid-failure, and far below
-    /// the gap between bursts.
-    pub failure_decay_window: Duration,
-    /// Base delay between failed attempts, doubling per consecutive
-    /// failure up to a fixed cap. Paired with `failure_budget` this is
-    /// what the budget measures: the escalation must take long enough
-    /// that an etcd blip cannot spend the whole budget before the
-    /// cluster recovers, since giving up restarts the process this
-    /// coordinator shares with a serving router.
     pub run_retry_backoff: Duration,
     /// How long to wait after the first pod event before rebalancing, to batch
     /// rapid pod registrations into a single rebalance.
@@ -150,8 +112,6 @@ impl Default for CoordinatorConfig {
             // budget buys the same tolerance everywhere: ten consecutive
             // failures span minutes rather than seconds.
             run_retry_backoff: Duration::from_millis(500),
-            failure_budget: 20,
-            failure_decay_window: Duration::from_secs(300),
             rebalance_debounce_interval: Duration::from_secs(1),
             reconcile_interval: Duration::from_secs(5),
             handoff_deadline: Duration::from_secs(120),
@@ -266,13 +226,17 @@ impl Coordinator {
     /// Run the coordinator loop. Continuously attempts leader election;
     /// when elected, runs the coordination loop until leadership is lost
     /// or cancellation is requested.
-    pub async fn run(&self, cancel: CancellationToken) -> Result<()> {
+    pub async fn run(&self, cancel: CancellationToken) {
         util::preregister_coordinator_metrics();
+        // Paces retries only. It never resets, so it saturates at the
+        // cap: a coordinator that cannot make progress settles into
+        // retrying at the cap, and an isolated failure long after a bad
+        // spell waits the cap once — an order of magnitude inside the
+        // handoff deadline it sits within.
         let mut consecutive_failures = 0u32;
-        let mut last_failure: Option<Instant> = None;
         loop {
             if cancel.is_cancelled() {
-                return Ok(());
+                return;
             }
             // Campaign only into an opening. A campaign costs a lease
             // grant, a transaction and a revoke whether or not it wins,
@@ -285,7 +249,7 @@ impl Coordinator {
             // both spend the budget below rather than retrying in
             // silence.
             let attempt = match self.await_election_opening(&cancel).await {
-                Ok(()) if cancel.is_cancelled() => return Ok(()),
+                Ok(()) if cancel.is_cancelled() => return,
                 // Awaited to completion, never raced against
                 // cancellation: dropping try_lead mid-cleanup would
                 // strand the election lease until TTL expiry, stalling
@@ -302,59 +266,48 @@ impl Coordinator {
                 Ok(false) => {}
                 Err(e) if e.is_leadership_lost() => {
                     tracing::info!(name = %self.config.name, "abdicated; a successor takes over");
-                    // Counted as well as logged: abdicating repeatedly
-                    // is the shape this arm escalates on, and without a
-                    // series the lead-up to that is invisible — the
-                    // crash would be the first thing anyone saw.
+                    // Counted so a lease that cannot renew — which
+                    // reaches this arm every term, each one paying a full
+                    // bootstrap to lead for a renewal margin and stop —
+                    // is visible as the flap it is.
                     counter!("personhog_coordination_abdications_total").increment(1);
-                    // One abdication is the protocol working. A term that
-                    // keeps ending this way is not: a lease that cannot
-                    // renew reaches this arm every time, and each cycle
-                    // pays a full coordination bootstrap — a revision
-                    // read, six watch creations, four list reads — to
-                    // lead for the length of a renewal margin and stop.
-                    // Coordination is wedged for every one of those
-                    // terms, so the flap joins the same run as any other
-                    // ending and escalates like one, while a single
-                    // abdication decays before the next.
-                    if !self.note_run_ended(&mut consecutive_failures, &mut last_failure) {
-                        return Err(e);
-                    }
-                    tokio::select! {
-                        _ = cancel.cancelled() => return Ok(()),
-                        _ = tokio::time::sleep(self.config.election_retry_interval) => {}
+                    // `try_lead` revoked on the way out, so the key this
+                    // candidate would wait on is already gone and it
+                    // would otherwise re-campaign at etcd speed.
+                    if self
+                        .pace(&cancel, self.config.election_retry_interval)
+                        .await
+                    {
+                        return;
                     }
                 }
                 Err(e) => {
-                    let new_run = self.starts_new_run(&mut last_failure);
-                    if !util::note_run_failure_after(
-                        &mut consecutive_failures,
-                        new_run,
-                        self.config.failure_budget,
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    util::record_run_failure(
                         "coordinator",
                         &self.config.name,
+                        consecutive_failures,
                         &e,
-                    ) {
-                        return Err(e);
-                    }
-                    // A failure leaves the opening open, so the next pass
-                    // would retry immediately. Back off as the pod's and
-                    // router's supervisors do: giving up restarts the
-                    // process this coordinator shares with a serving
-                    // router, so the budget has to span an etcd outage
-                    // rather than a handful of seconds of one.
+                    );
                     const BACKOFF_CAP: Duration = Duration::from_secs(15);
                     let backoff = self
                         .config
                         .run_retry_backoff
                         .saturating_mul(2u32.saturating_pow(consecutive_failures.saturating_sub(1)))
                         .min(BACKOFF_CAP);
-                    tokio::select! {
-                        _ = cancel.cancelled() => return Ok(()),
-                        _ = tokio::time::sleep(backoff) => {}
+                    if self.pace(&cancel, backoff).await {
+                        return;
                     }
                 }
             }
+        }
+    }
+
+    /// Wait, or report that shutdown arrived first.
+    async fn pace(&self, cancel: &CancellationToken, delay: Duration) -> bool {
+        tokio::select! {
+            _ = cancel.cancelled() => true,
+            _ = tokio::time::sleep(delay) => false,
         }
     }
 
@@ -377,34 +330,6 @@ impl Coordinator {
                 );
                 Ok(())
             })
-    }
-
-    /// Whether this term ending begins a new run, stamping it as the
-    /// most recent either way.
-    ///
-    /// A run is unbroken only while its endings keep arriving. One quiet
-    /// window and the next ending starts over, which is what keeps a
-    /// daily blip from adding up across days into a restart.
-    fn starts_new_run(&self, last: &mut Option<Instant>) -> bool {
-        let new_run = last.is_none_or(|at| at.elapsed() >= self.config.failure_decay_window);
-        *last = Some(Instant::now());
-        new_run
-    }
-
-    /// Record a term ending that is not itself a failure, and report
-    /// whether the run may continue.
-    ///
-    /// Deliberately quieter than `note_run_failure_after`: it neither
-    /// logs a warning nor touches the failure counter, because the
-    /// endings that come through here are the protocol working when they
-    /// happen once. Only their accumulation means anything.
-    fn note_run_ended(&self, consecutive: &mut u32, last: &mut Option<Instant>) -> bool {
-        *consecutive = if self.starts_new_run(last) {
-            1
-        } else {
-            *consecutive + 1
-        };
-        *consecutive < self.config.failure_budget
     }
 
     /// Block until this candidate has something to campaign for: no
@@ -1544,15 +1469,22 @@ impl Coordinator {
         } else {
             "dead_new_owner"
         };
+        // Attribution only. A read that fails here must not be turned
+        // into an answer: `None` means "no membership recorded", which
+        // widens the requirement to every live router, so a transient
+        // error would name every one of them as a blocker — during the
+        // mass cancellation when etcd is least well and the accusation
+        // is least true.
         let missing_ackers = if predecessor.phase == HandoffPhase::Freezing {
-            let quorum = store
-                .resolve_freeze_quorum(predecessor)
-                .await
-                .unwrap_or(None);
-            match store.list_freeze_acks(predecessor.partition).await {
-                Ok(acks) => missing_freeze_ackers(routers, &acks, predecessor, quorum.as_deref()),
-                Err(e) => {
-                    tracing::warn!(error = %e, "could not read freeze acks for attribution");
+            match (
+                store.resolve_freeze_quorum(predecessor).await,
+                store.list_freeze_acks(predecessor.partition).await,
+            ) {
+                (Ok(quorum), Ok(acks)) => {
+                    missing_freeze_ackers(routers, &acks, predecessor, quorum.as_deref())
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    tracing::warn!(error = %e, "could not attribute the missing freeze acks");
                     Vec::new()
                 }
             }
