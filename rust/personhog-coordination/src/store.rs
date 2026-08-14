@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::str::from_utf8;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use assignment_coordination::store::EtcdStore;
 use etcd_client::{Compare, CompareOp, DeleteOptions, PutOptions, Txn, TxnOp, WatchStream};
@@ -82,6 +84,15 @@ impl StoreKey<'_> {
 #[derive(Clone)]
 pub struct PersonhogStore {
     inner: EtcdStore,
+    /// Freeze-quorum memberships already read, by record id.
+    ///
+    /// A record is written once, in the transaction that creates the
+    /// handoffs referring to it, and is only ever deleted — never
+    /// rewritten — so an id identifies one immutable value and caching
+    /// it cannot go stale. Every handoff a plan created shares one id,
+    /// so without this a reconcile pass over a few hundred frozen
+    /// partitions reads the same key a few hundred times.
+    freeze_quorums: Arc<StdMutex<HashMap<String, Vec<String>>>>,
 }
 
 /// Counts store calls by the method that made them. The shared etcd
@@ -95,7 +106,10 @@ fn count_call(site: &'static str) {
 
 impl PersonhogStore {
     pub fn new(inner: EtcdStore) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            freeze_quorums: Arc::new(StdMutex::new(HashMap::new())),
+        }
     }
 
     pub fn inner(&self) -> &EtcdStore {
@@ -109,6 +123,7 @@ impl PersonhogStore {
     // ── Pod operations ──────────────────────────────────────────
 
     pub async fn register_pod(&self, pod: &RegisteredPod, lease_id: i64) -> Result<()> {
+        count_call("register_pod");
         let key = self.key(StoreKey::Pod(&pod.pod_name));
         Ok(self.inner.put(&key, pod, Some(lease_id)).await?)
     }
@@ -121,6 +136,7 @@ impl PersonhogStore {
     }
 
     pub async fn get_pod(&self, pod_name: &str) -> Result<Option<RegisteredPod>> {
+        count_call("get_pod");
         let key = self.key(StoreKey::Pod(pod_name));
         Ok(self.inner.get(&key).await?)
     }
@@ -141,6 +157,7 @@ impl PersonhogStore {
     /// List pods along with the etcd revision of the snapshot, so a watch
     /// can be anchored strictly after it.
     pub async fn list_pods_with_revision(&self) -> Result<(Vec<RegisteredPod>, i64)> {
+        count_call("list_pods_with_revision");
         let key = self.key(StoreKey::PodsPrefix);
         Ok(self.inner.list_with_revision(&key).await?)
     }
@@ -151,6 +168,7 @@ impl PersonhogStore {
         status: PodStatus,
         lease_id: i64,
     ) -> Result<()> {
+        count_call("update_pod_status");
         let key = self.key(StoreKey::Pod(pod_name));
         let mut pod: RegisteredPod = self
             .inner
@@ -182,6 +200,7 @@ impl PersonhogStore {
     // ── Router operations ────────────────────────────────────────
 
     pub async fn register_router(&self, router: &RegisteredRouter, lease_id: i64) -> Result<()> {
+        count_call("register_router");
         let key = self.key(StoreKey::Router(&router.router_name));
         Ok(self.inner.put(&key, router, Some(lease_id)).await?)
     }
@@ -219,6 +238,7 @@ impl PersonhogStore {
     /// Like `list_assignments`, but also returns the etcd revision of the
     /// snapshot, for gap-free snapshot-then-watch handshakes.
     pub async fn list_assignments_with_revision(&self) -> Result<(Vec<PartitionAssignment>, i64)> {
+        count_call("list_assignments_with_revision");
         let key = self.key(StoreKey::AssignmentsPrefix);
         Ok(self.inner.list_with_revision(&key).await?)
     }
@@ -270,6 +290,7 @@ impl PersonhogStore {
     /// snapshot. Pair with `watch_handoffs_from(revision + 1)` for a
     /// gap-free snapshot-then-watch handshake.
     pub async fn list_handoffs_with_revision(&self) -> Result<(Vec<HandoffState>, i64)> {
+        count_call("list_handoffs_with_revision");
         let key = self.key(StoreKey::HandoffsPrefix);
         Ok(self.inner.list_with_revision(&key).await?)
     }
@@ -278,6 +299,7 @@ impl PersonhogStore {
     /// `mod_revision`, so a later replacement can be guarded on the
     /// record being exactly the one this snapshot read.
     pub async fn list_handoffs_with_mod_revisions(&self) -> Result<Vec<(HandoffState, i64)>> {
+        count_call("list_handoffs_with_mod_revisions");
         let key = self.key(StoreKey::HandoffsPrefix);
         Ok(self.inner.list_with_mod_revisions(&key).await?)
     }
@@ -285,6 +307,7 @@ impl PersonhogStore {
     /// Bypasses the protocol: see the crate's `test-support` feature.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn put_handoff(&self, handoff: &HandoffState) -> Result<()> {
+        count_call("put_handoff");
         let key = self.key(StoreKey::Handoff(handoff.partition));
         Ok(self.inner.put(&key, handoff, None).await?)
     }
@@ -313,6 +336,7 @@ impl PersonhogStore {
         expected: crate::types::HandoffPhase,
         new_phase: crate::types::HandoffPhase,
     ) -> Result<bool> {
+        count_call("cas_handoff_phase");
         let handoff_key = self.key(StoreKey::Handoff(partition));
         let Some((mut handoff, mod_revision)) = self
             .inner
@@ -573,6 +597,7 @@ impl PersonhogStore {
         // reference to a record that does not exist.
         freeze_quorum: Option<(&str, &[String])>,
     ) -> Result<bool> {
+        count_call("apply_plan");
         let mut guards: Vec<Compare> =
             Vec::with_capacity(handoffs.len() + replacements.len() + preconditions.len());
         let mut ops: Vec<TxnOp> =
@@ -625,7 +650,9 @@ impl PersonhogStore {
                 self.key(StoreKey::DrainedAcksForPartition(partition)),
                 self.key(StoreKey::WarmedAcksForPartition(partition)),
             ] {
-                plan_bytes += acks.len();
+                // A prefix delete carries `range_end` as well as the
+                // key, and they are the same length.
+                plan_bytes += acks.len() * 2;
                 ops.push(TxnOp::delete(acks, prefix_delete()));
             }
             ops.push(TxnOp::put(key, value, None));
@@ -695,6 +722,7 @@ impl PersonhogStore {
         expected_id: &str,
         expected_phase: crate::types::HandoffPhase,
     ) -> Result<bool> {
+        count_call("complete_handoff");
         let handoff_key = self.key(StoreKey::Handoff(partition));
 
         let (mut handoff, mod_revision) = self
@@ -759,7 +787,30 @@ impl PersonhogStore {
     ) -> Result<Option<Vec<String>>> {
         match &handoff.freeze_quorum_ref {
             Some(id) => {
+                if let Some(members) = self
+                    .freeze_quorums
+                    .lock()
+                    .expect("freeze quorum cache lock poisoned")
+                    .get(id)
+                {
+                    return Ok(Some(members.clone()));
+                }
                 let members = self.get_freeze_quorum(id).await?;
+                if let Some(members) = &members {
+                    let mut cache = self
+                        .freeze_quorums
+                        .lock()
+                        .expect("freeze quorum cache lock poisoned");
+                    // One live plan at a time in the steady state; a
+                    // handful of entries covers a failover overlapping
+                    // its predecessor, and the sweep deletes the records
+                    // themselves. Clearing wholesale keeps the bound
+                    // without tracking recency for a map this small.
+                    if cache.len() >= 8 {
+                        cache.clear();
+                    }
+                    cache.insert(id.clone(), members.clone());
+                }
                 if members.is_none() {
                     crate::util::record_unresolved_freeze_quorum();
                     tracing::warn!(
@@ -820,6 +871,7 @@ impl PersonhogStore {
     }
 
     pub async fn get_leader(&self) -> Result<Option<LeaderInfo>> {
+        count_call("get_leader");
         let key = self.key(StoreKey::Leader);
         Ok(self.inner.get(&key).await?)
     }
@@ -842,6 +894,7 @@ impl PersonhogStore {
     // ── Lease operations ────────────────────────────────────────
 
     pub async fn grant_lease(&self, ttl: i64) -> Result<i64> {
+        count_call("grant_lease");
         Ok(self.inner.grant_lease(ttl).await?)
     }
 
@@ -853,6 +906,7 @@ impl PersonhogStore {
     }
 
     pub async fn revoke_lease(&self, lease_id: i64) -> Result<()> {
+        count_call("revoke_lease");
         Ok(self.inner.revoke_lease(lease_id).await?)
     }
 

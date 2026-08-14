@@ -328,9 +328,23 @@ impl EtcdStore {
 
     // ── Transactions ─────────────────────────────────────────────
 
+    /// The response's size is what this records — the request's own size
+    /// is not reachable once a `Txn` is built, and `apply_plan` measures
+    /// that side directly for the one transaction that approaches
+    /// `--max-request-bytes`.
     pub async fn txn(&self, txn: Txn) -> Result<TxnResponse> {
         let _t = OpTimer::new("txn");
-        Ok(self.client.clone().txn(txn).await?)
+        let resp = self.client.clone().txn(txn).await?;
+        let bytes: usize = resp
+            .op_responses()
+            .iter()
+            .map(|op| match op {
+                etcd_client::TxnOpResponse::Get(get) => kvs_bytes(get.kvs()),
+                _ => 0,
+            })
+            .sum();
+        record_payload_bytes("txn", bytes);
+        Ok(resp)
     }
 
     /// Atomically create `key` bound to `lease_id`, only if it does not

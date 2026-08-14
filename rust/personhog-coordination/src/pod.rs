@@ -1501,6 +1501,7 @@ impl PodHandle {
                 msg = stream.message() => {
                     let resp = msg?.ok_or_else(|| Error::invalid_state("handoff watch stream ended".to_string()))?;
                     for event in resp.events() {
+                        let mut unreadable = false;
                         // Every pod watches every handoff, so a fleet-wide
                         // rebalance delivers one event per partition to
                         // every pod. Converging on all of them costs two
@@ -1530,6 +1531,7 @@ impl PodHandle {
                                 }
                                 Err(e) => {
                                     tracing::error!(pod = %self.config.pod_name, error = %e, "failed to parse handoff");
+                                    unreadable = true;
                                     None
                                 }
                             },
@@ -1545,10 +1547,18 @@ impl PodHandle {
                                 .and_then(store::extract_partition_from_key)
                             {
                                 Some(p) if self.is_involved(p, &in_flight).await => Some(p),
-                                _ => None,
+                                Some(_) => None,
+                                None => {
+                                    unreadable = true;
+                                    None
+                                }
                             },
                         };
-                        util::record_handoff_event_disposition(partition.is_some());
+                        util::record_handoff_event_disposition(match (partition, unreadable) {
+                            (Some(_), _) => "converged",
+                            (None, true) => "unreadable",
+                            (None, false) => "skipped",
+                        });
                         if let Some(partition) = partition {
                             dispatch(
                                 self,
