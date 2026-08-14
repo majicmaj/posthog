@@ -152,7 +152,7 @@ export const pendingFingerprintIssueStateUpdateLogic = kea<pendingFingerprintIss
 
 function findCurrentIssueState(id: string): CurrentIssueState | null {
     const detail = errorTrackingIssueSceneLogic.findMounted({ id })?.values.issue as
-        | ErrorTrackingRelationalIssue
+        | (ErrorTrackingRelationalIssue & Pick<ErrorTrackingIssue, 'severity'>)
         | null
         | undefined
     if (detail && detail.id === id) {
@@ -161,6 +161,7 @@ function findCurrentIssueState(id: string): CurrentIssueState | null {
             name: detail.name ?? null,
             description: detail.description ?? null,
             status: detail.status,
+            severity: detail.severity ?? null,
             assignee: detail.assignee ?? null,
             first_seen: detail.first_seen,
         }
@@ -174,6 +175,7 @@ function findCurrentIssueState(id: string): CurrentIssueState | null {
             name: listIssue.name ?? null,
             description: listIssue.description ?? null,
             status: listIssue.status,
+            severity: listIssue.severity ?? null,
             assignee: listIssue.assignee ?? null,
             first_seen: listIssue.first_seen,
         }

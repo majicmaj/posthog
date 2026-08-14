@@ -702,6 +702,29 @@ class TestErrorTrackingQueryRunner(ClickhouseTestMixin, NonAtomicBaseTestKeepIde
         )["results"]
         self.assertEqual(len(results), 1)
 
+    @freeze_time("2022-01-10T12:11:00")
+    def test_issue_severity_is_set_filter(self):
+        ErrorTrackingIssue.objects.filter(id=self.issue_id_one).update(severity=ErrorTrackingIssue.Severity.HIGH)
+        sync_issues_to_clickhouse(issue_ids=[self.issue_id_one], team_id=self.team.pk)
+
+        results = self._calculate(
+            filterGroup=PropertyGroupFilter(
+                type=FilterLogicalOperator.AND_,
+                values=[
+                    PropertyGroupFilterValue(
+                        type=FilterLogicalOperator.AND_,
+                        values=[
+                            ErrorTrackingIssueFilter(key="severity", value=True, operator=PropertyOperator.IS_SET),
+                        ],
+                    )
+                ],
+            )
+        )["results"]
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], self.issue_id_one)
+        self.assertEqual(results[0]["severity"], ErrorTrackingIssue.Severity.HIGH)
+
     @parameterized.expand(
         [
             (

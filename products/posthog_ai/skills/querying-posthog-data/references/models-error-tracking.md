@@ -11,6 +11,7 @@ Column | Type | Nullable | Description
 `team_id` | integer | NOT NULL | FK to `system.teams.id`
 `created_at` | timestamp with tz | NOT NULL | Creation timestamp
 `status` | varchar | NOT NULL | Issue status (see Status Values below)
+`severity` | varchar | NULL | Assigned severity: `low`, `medium`, `high`, or `critical`
 `name` | text | NULL | Issue name (typically the exception type/message)
 `description` | text | NULL | User-provided description
 
@@ -108,6 +109,16 @@ WHERE name ILIKE '%timeout%'
 SELECT status, count() AS count
 FROM system.error_tracking_issues
 GROUP BY status
+ORDER BY count DESC
+```
+
+**Count issues by assigned severity:**
+
+```sql
+SELECT severity, count() AS count
+FROM system.error_tracking_issues
+WHERE severity IS NOT NULL
+GROUP BY severity
 ORDER BY count DESC
 ```
 

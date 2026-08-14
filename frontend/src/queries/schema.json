@@ -20946,6 +20946,16 @@
                 "name": {
                     "type": ["string", "null"]
                 },
+                "severity": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/definitions/ErrorTrackingQueryIssueSeverity"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ]
+                },
                 "source": {
                     "type": "string"
                 },
@@ -21266,6 +21276,16 @@
                 "issue_name": {
                     "type": ["string", "null"]
                 },
+                "issue_severity": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/definitions/ErrorTrackingQueryIssueSeverity"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ]
+                },
                 "issue_status": {
                     "type": "string"
                 },
@@ -21280,6 +21300,7 @@
                 "issue_name",
                 "issue_description",
                 "issue_status",
+                "issue_severity",
                 "assigned_user_id",
                 "assigned_role_id",
                 "first_seen",
@@ -21396,6 +21417,11 @@
             },
             "required": ["dateRange", "kind", "orderBy", "volumeResolution"],
             "type": "object"
+        },
+        "ErrorTrackingQueryIssueSeverity": {
+            "enum": ["low", "medium", "high", "critical"],
+            "title": "ErrorTrackingQueryIssueSeverity",
+            "type": "string"
         },
         "ErrorTrackingQueryResponse": {
             "additionalProperties": false,

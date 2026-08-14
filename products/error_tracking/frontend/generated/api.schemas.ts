@@ -892,6 +892,8 @@ export interface ErrorTrackingIssueDetailApi {
     description?: string | null
     /** Issue status. */
     status?: string
+    /** Issue severity, or null when no severity is assigned. */
+    severity?: ErrorTrackingIssueSeverityApi | null
     /**
      * First seen timestamp.
      * @nullable
@@ -1306,6 +1308,8 @@ export interface ErrorTrackingIssueListItemApi {
     description?: string | null
     /** Issue status. */
     status?: string
+    /** Issue severity, or null when no severity is assigned. */
+    severity?: ErrorTrackingIssueSeverityApi | null
     /**
      * First seen timestamp.
      * @nullable
