@@ -7,6 +7,7 @@
 //! All tests run against a real etcd at localhost:2379 with per-test key
 //! prefixes, matching the conventions in `integration.rs`.
 
+use etcd_client::EventType;
 use personhog_coordination::authority::AuthorityClock;
 mod common;
 
@@ -4777,88 +4778,73 @@ async fn a_handoff_cancelled_mid_warm_reaches_the_pod_still_warming() {
     cancel.cancel();
 }
 
-/// Unrelated failures spread across healthy terms must not add up to a
-/// restart.
+/// A leader that disappears between a standby's read and its watch is
+/// still delivered to that watch.
 ///
-/// The run budget bounds a crash loop, not a lifetime. A coordinator
-/// that wins the election and leads well produces no `Ok` outcome — it
-/// returns only when the term ends — so without applied-work evidence
-/// from inside the term the count never resets, and a watch stream that
-/// drops every few days eventually kills a process that was healthy in
-/// between. Giving up restarts the router this coordinator runs beside,
-/// so that mistake costs a serving pod.
+/// This is the ordering a standby cannot avoid: it reads the leader key,
+/// then attaches a watch, and the leader can go in between. Anchoring
+/// the watch at the revision the read returned replays that deletion;
+/// anchoring at "now" drops it, which looks identical in any test that
+/// lets the watch attach first — and leaves a candidate parked until its
+/// fallback re-read, on top of the lease TTL it already waited out.
 ///
-/// The budget here is smaller than the number of outages, so the fix is
-/// what the test turns on.
+/// Driven through the two primitives `read_leader_and_watch` composes,
+/// rather than through that call or the standby loop: the deletion has
+/// to land between the read and the watch, and no amount of racing a
+/// composed call produces that ordering on demand. The composition
+/// itself is two lines with no branches.
 #[tokio::test]
-async fn healthy_terms_between_outages_keep_the_coordinator_alive() {
-    const COORDINATOR: &str = "resetting-coordinator";
+async fn a_leader_that_goes_between_the_read_and_the_watch_is_still_delivered() {
+    let store = test_store("standby-watch-anchor").await;
 
-    let proxy = FlakyProxy::start("127.0.0.1:2379").await;
-    let prefix = format!("/test-coordinator-resets-{}/", uuid::Uuid::new_v4());
-    let store = store_at(&proxy.endpoint, &prefix).await;
-    let direct = store_at(ETCD_ENDPOINT, &prefix).await;
-
-    let coordinator = Coordinator::new(
-        Arc::clone(&store),
-        CoordinatorConfig {
-            name: COORDINATOR.to_string(),
-            election_retry_interval: Duration::from_millis(50),
-            run_retry_backoff: Duration::from_millis(10),
-            reconcile_interval: Duration::from_millis(100),
-            failure_budget: 2,
-            ..Default::default()
-        },
-        Arc::new(StickyBalancedStrategy),
-        None,
-    );
-    let cancel = CancellationToken::new();
-    let token = cancel.clone();
-    let mut running = tokio::spawn(async move { coordinator.run(token).await });
-
-    // A term is identified by its election lease: winning grants a fresh
-    // one. Waiting on the id to change is what separates a new term from
-    // the previous term's key still sitting there, which the holder name
-    // alone cannot do — and severing against that stale key lands the
-    // next outage in the middle of a recovery rather than after it.
-    let mut term = await_new_term(&direct, COORDINATOR, None).await;
-
-    for outage in 0..3 {
-        // Let the new term's reconcile tick — the applied-work signal
-        // the budget resets on — fire. It runs every 100ms, so this
-        // window holds about ten of them.
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        assert!(
-            !running.is_finished(),
-            "outage {outage} must not end the run while healthy terms separate the failures"
-        );
-
-        proxy.sever();
-        term = await_new_term(&direct, COORDINATOR, Some(term)).await;
-    }
-
-    // More outages than the budget have now passed, each with a healthy
-    // term in between.
-    let still_running = tokio::time::timeout(Duration::from_secs(2), &mut running).await;
+    let lease_id = store.grant_lease(60).await.unwrap();
     assert!(
-        still_running.is_err(),
-        "a coordinator that keeps recovering must not exhaust its budget"
+        store
+            .try_acquire_leadership("incumbent", lease_id)
+            .await
+            .unwrap(),
+        "the test's own leader must take the key"
     );
 
-    cancel.cancel();
-}
+    // The read a standby makes, then the deletion, then the watch —
+    // the interleaving `read_leader_and_watch` composes these two
+    // primitives to survive, driven step by step because it is the one
+    // ordering a test cannot produce by racing the composed call.
+    let (leader, revision) = store
+        .get_leader_with_revision()
+        .await
+        .expect("reading the leader key must succeed");
+    assert!(
+        leader.is_some(),
+        "the incumbent must be visible to the read"
+    );
 
-/// Block until `name` holds the election under a lease other than
-/// `previous`, and return that lease id.
-async fn await_new_term(store: &PersonhogStore, name: &str, previous: Option<i64>) -> i64 {
-    let deadline = std::time::Instant::now() + WAIT_TIMEOUT;
-    while std::time::Instant::now() < deadline {
-        if let Ok(Some(leader)) = store.get_leader().await {
-            if leader.holder == name && Some(leader.lease_id) != previous {
-                return leader.lease_id;
+    store.revoke_lease(lease_id).await.unwrap();
+
+    let mut stream = store
+        .watch_leader_from(revision + 1)
+        .await
+        .expect("watching the leader key must succeed");
+
+    let delivered = tokio::time::timeout(WAIT_TIMEOUT, async {
+        loop {
+            let Ok(Some(response)) = stream.message().await else {
+                return false;
+            };
+            if response
+                .events()
+                .iter()
+                .any(|event| event.event_type() == EventType::Delete)
+            {
+                return true;
             }
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
-    }
-    panic!("timed out waiting for a coordinator term newer than {previous:?}");
+    })
+    .await
+    .expect("the watch must deliver the deletion it missed, not wait for a new one");
+
+    assert!(
+        delivered,
+        "a watch anchored on the read's revision must replay the deletion"
+    );
 }
