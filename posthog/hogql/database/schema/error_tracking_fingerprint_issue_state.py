@@ -142,7 +142,14 @@ def select_from_error_tracking_fingerprint_issue_state_table(
     for field_name in requested_fields:
         if field_name == "fp_hash":
             continue
-        if field_name in _ARGMAX_FIELDS:
+        if field_name == "version":
+            select_exprs.append(
+                ast.Alias(
+                    alias=field_name,
+                    expr=ast.Call(name="max", args=[ast.Field(chain=[RAW_TABLE_NAME, "version"])]),
+                )
+            )
+        elif field_name in _ARGMAX_FIELDS:
             select_exprs.append(
                 ast.Alias(
                     alias=field_name,
@@ -286,6 +293,11 @@ class ErrorTrackingFingerprintIssueStateTable(LazyTable):
     # column — so it lives here, not on the raw table.
     fields: dict[str, FieldOrTable] = {
         **ERROR_TRACKING_FINGERPRINT_ISSUE_STATE_FIELDS,
+        "version": IntegerDatabaseField(
+            name="version",
+            nullable=False,
+            description="Version of the latest state for this fingerprint.",
+        ),
         "fp_hash": IntegerDatabaseField(
             name="fp_hash", nullable=False, description="cityHash64 of the fingerprint, used as the join/group key."
         ),
