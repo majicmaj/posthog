@@ -1302,6 +1302,24 @@ class TestCanvasErrorReports(CanvasAPIBaseTest):
         update = TaskThreadMessage.objects.for_team(self.team.id).get(content="Run requested from the canvas")
         assert update.author_id == self.user.id
 
+    def test_repeat_agent_request_does_not_duplicate_the_thread_entry(self):
+        # A deduplicated repeat (already_queued) produced no new run, so it must
+        # not add a second "Run requested" record to the author-facing thread.
+        canvas_id, _, task = self._authored_canvas(agent_requests=True)
+
+        with (
+            patch("products.tasks.backend.temporal.client.execute_task_processing_workflow"),
+            patch("products.tasks.backend.facade.api.signal_task_run_user_message", return_value=False),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            first = self._request_agent(canvas_id, "Make it blue.")
+            repeat = self._request_agent(canvas_id, "Make it blue.")
+
+        assert first.json()["request_outcome"] == "new_run", first.json()
+        assert repeat.json()["request_outcome"] == "already_queued", repeat.json()
+        entries = TaskThreadMessage.objects.for_team(self.team.id).filter(content="Run requested from the canvas")
+        assert entries.count() == 1
+
     def test_request_agent_reports_non_creator_request_without_starting_run(self):
         canvas_id, _, task = self._authored_canvas(agent_requests=True)
         teammate = User.objects.create_and_join(self.organization, "viewer@example.com", None)
