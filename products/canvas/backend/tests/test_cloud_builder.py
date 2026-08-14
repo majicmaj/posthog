@@ -12,6 +12,7 @@ from django.test import SimpleTestCase
 from parameterized import parameterized
 
 from products.canvas.backend.build_service import node_executable, run_cloud_builder, validate_builder_output
+from products.canvas.backend.contract import platform_dependencies
 from products.canvas.backend.presentation.serializers import CanvasSourceProjectSerializer
 from products.canvas.backend.source import synthetic_source_project, validate_source_project
 
@@ -88,6 +89,27 @@ class TestCanvasCloudBuilder(SimpleTestCase):
         self.assertEqual(manifest["entryHtml"], "index.html")
         self.assertFalse(manifest["capabilities"]["posthog"]["inlineQueries"])
         self.assertTrue(any(file["path"].endswith(".js") for file in files))
+
+    def test_bundles_the_extended_platform_libraries(self) -> None:
+        source = """
+import { useVirtualizer } from "@tanstack/react-virtual"
+import { useForm } from "react-hook-form"
+import { groupBy } from "lodash-es"
+import ReactMarkdown from "react-markdown"
+import Papa from "papaparse"
+void useVirtualizer
+void useForm
+void groupBy
+void ReactMarkdown
+void Papa
+"""
+
+        project = self._project(source)
+        project["dependencies"] = platform_dependencies()
+        result = run_cloud_builder(project)
+
+        self.assertEqual(result["status"], "ready", result["diagnostics"])
+        validate_builder_output(result)
 
     def test_runtime_uses_the_document_bound_message_port(self) -> None:
         result = run_cloud_builder(self._project('document.body.textContent = "Hello"'))
