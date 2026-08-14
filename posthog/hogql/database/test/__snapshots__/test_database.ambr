@@ -1308,9 +1308,11 @@
                       "issue_name",
                       "issue_description",
                       "issue_status",
+                      "issue_severity",
                       "assigned_user_id",
                       "assigned_role_id",
                       "first_seen",
+                      "version",
                       "fp_hash"
                   ],
                   "hogql_value": "fingerprint_issue_state",
@@ -1359,6 +1361,26 @@
                   "schema_valid": true,
                   "table": null,
                   "type": "string"
+              },
+              "issue_severity": {
+                  "chain": null,
+                  "fields": null,
+                  "hogql_value": "issue_severity",
+                  "id": null,
+                  "name": "issue_severity",
+                  "schema_valid": true,
+                  "table": null,
+                  "type": "string"
+              },
+              "issue_state_version": {
+                  "chain": null,
+                  "fields": null,
+                  "hogql_value": "issue_state_version",
+                  "id": null,
+                  "name": "issue_state_version",
+                  "schema_valid": true,
+                  "table": null,
+                  "type": "integer"
               },
               "issue_assigned_user_id": {
                   "chain": null,
@@ -6207,6 +6229,16 @@
                   "hogql_value": "status",
                   "id": null,
                   "name": "status",
+                  "schema_valid": true,
+                  "table": null,
+                  "type": "string"
+              },
+              "severity": {
+                  "chain": null,
+                  "fields": null,
+                  "hogql_value": "severity",
+                  "id": null,
+                  "name": "severity",
                   "schema_valid": true,
                   "table": null,
                   "type": "string"
@@ -11518,9 +11550,11 @@
                       "issue_name",
                       "issue_description",
                       "issue_status",
+                      "issue_severity",
                       "assigned_user_id",
                       "assigned_role_id",
                       "first_seen",
+                      "version",
                       "fp_hash"
                   ],
                   "hogql_value": "fingerprint_issue_state",
@@ -11569,6 +11603,26 @@
                   "schema_valid": true,
                   "table": null,
                   "type": "string"
+              },
+              "issue_severity": {
+                  "chain": null,
+                  "fields": null,
+                  "hogql_value": "issue_severity",
+                  "id": null,
+                  "name": "issue_severity",
+                  "schema_valid": true,
+                  "table": null,
+                  "type": "string"
+              },
+              "issue_state_version": {
+                  "chain": null,
+                  "fields": null,
+                  "hogql_value": "issue_state_version",
+                  "id": null,
+                  "name": "issue_state_version",
+                  "schema_valid": true,
+                  "table": null,
+                  "type": "integer"
               },
               "issue_assigned_user_id": {
                   "chain": null,
@@ -16417,6 +16471,16 @@
                   "hogql_value": "status",
                   "id": null,
                   "name": "status",
+                  "schema_valid": true,
+                  "table": null,
+                  "type": "string"
+              },
+              "severity": {
+                  "chain": null,
+                  "fields": null,
+                  "hogql_value": "severity",
+                  "id": null,
+                  "name": "severity",
                   "schema_valid": true,
                   "table": null,
                   "type": "string"

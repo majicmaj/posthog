@@ -624,6 +624,8 @@
             events__fingerprint_issue_state.issue_name AS issue_name,
             events__fingerprint_issue_state.issue_description AS issue_description,
             events__fingerprint_issue_state.issue_status AS issue_status,
+            events__fingerprint_issue_state.issue_severity AS issue_severity,
+            events__fingerprint_issue_state.version AS issue_state_version,
             events__fingerprint_issue_state.assigned_user_id AS issue_assigned_user_id,
             events__fingerprint_issue_state.assigned_role_id AS issue_assigned_role_id,
             events__fingerprint_issue_state.first_seen AS issue_first_seen
@@ -634,6 +636,8 @@
                toNullable(tupleElement(argMax(tuple(error_tracking_fingerprint_issue_state.issue_name), error_tracking_fingerprint_issue_state.version), 1)) AS issue_name,
                toNullable(tupleElement(argMax(tuple(error_tracking_fingerprint_issue_state.issue_description), error_tracking_fingerprint_issue_state.version), 1)) AS issue_description,
                toNullable(tupleElement(argMax(tuple(error_tracking_fingerprint_issue_state.issue_status), error_tracking_fingerprint_issue_state.version), 1)) AS issue_status,
+               toNullable(tupleElement(argMax(tuple(error_tracking_fingerprint_issue_state.issue_severity), error_tracking_fingerprint_issue_state.version), 1)) AS issue_severity,
+               max(error_tracking_fingerprint_issue_state.version) AS version,
                toNullable(tupleElement(argMax(tuple(error_tracking_fingerprint_issue_state.assigned_user_id), error_tracking_fingerprint_issue_state.version), 1)) AS assigned_user_id,
                toNullable(tupleElement(argMax(tuple(error_tracking_fingerprint_issue_state.assigned_role_id), error_tracking_fingerprint_issue_state.version), 1)) AS assigned_role_id,
                toNullable(tupleElement(argMax(tuple(toTimeZone(error_tracking_fingerprint_issue_state.first_seen, 'UTC')), error_tracking_fingerprint_issue_state.version), 1)) AS first_seen
