@@ -72,6 +72,23 @@ export const FREEFORM_WHITELIST: WhitelistEntry[] = [
     version: "8.21.3",
     esm: `${ESM}/@tanstack/react-table@8.21.3?external=react,react-dom`,
   },
+  {
+    name: "@tanstack/react-virtual",
+    version: "3.14.9",
+    esm: `${ESM}/@tanstack/react-virtual@3.14.9?external=react,react-dom`,
+  },
+  {
+    name: "react-hook-form",
+    version: "7.85.0",
+    esm: `${ESM}/react-hook-form@7.85.0?external=react`,
+  },
+  { name: "lodash-es", version: "4.18.1", esm: `${ESM}/lodash-es@4.18.1` },
+  {
+    name: "react-markdown",
+    version: "10.1.0",
+    esm: `${ESM}/react-markdown@10.1.0?external=react`,
+  },
+  { name: "papaparse", version: "5.6.0", esm: `${ESM}/papaparse@5.6.0` },
 ];
 
 // The CDN host the edit-mode import map (and Babel) load from. The iframe CSP
