@@ -354,6 +354,7 @@ pub fn preregister_coordinator_metrics() {
     metrics::counter!("personhog_coordination_election_campaigns_total").increment(0);
     metrics::counter!("personhog_coordination_abdications_total").increment(0);
     metrics::counter!("personhog_coordination_freeze_quorum_sweep_failures_total").increment(0);
+    metrics::counter!("personhog_coordination_freeze_quorums_collected_total").increment(0);
     // The coordinator's whole escalation story is this series, and its
     // failures arrive in correlated bursts with quiet days between —
     // exactly the delta a lazily-registered counter loses.

@@ -285,7 +285,6 @@ impl Coordinator {
                     if self.wait_or_shutdown(&cancel, wait).await {
                         return;
                     }
-                    drop(e);
                 }
                 Err(e) => {
                     let wait = self.pace_after_ending(&mut consecutive_endings, &mut last_ending);
@@ -875,13 +874,6 @@ impl Coordinator {
                     // drift of any cause. Cancellation itself is a
                     // planning decision — the planner replaces a doomed
                     // handoff with whatever resolves its stashes.
-                    // Housekeeping, so it waits behind advancement for
-                    // the same reason the gauge refresh does: only the
-                    // two reads above need their order, and its deletes
-                    // are one round trip per orphan that a read-only
-                    // etcd turns into a per-tick tax paid before any
-                    // handoff moves.
-                    Self::collect_stale_freeze_quorums(&store, quorum_candidates, &handoffs).await;
                     replan.notify_one();
                     // The gauge refresh is best-effort and runs after the
                     // reconcile pass: its reads exist only for metrics and
@@ -897,6 +889,13 @@ impl Coordinator {
                             tracing::debug!(error = %e, "skipping cluster gauge refresh");
                         }
                     }
+                    // Last, with the gauge refresh, because it is
+                    // housekeeping by the same standard: only its two
+                    // reads above need their order, while its deletes
+                    // are a round trip per orphan that a read-only etcd
+                    // would otherwise charge ahead of every handoff and
+                    // the planner wake.
+                    Self::collect_stale_freeze_quorums(&store, quorum_candidates, &handoffs).await;
                 }
             }
         }
@@ -909,6 +908,13 @@ impl Coordinator {
     /// deleted while still referenced only makes its handoff fall back
     /// to requiring every live router. Neither can advance a handoff
     /// early, which is why this runs without a transaction.
+    ///
+    /// Note what observes a record deleted in error. A coordinator that
+    /// still holds it cached keeps using the correct membership and says
+    /// nothing — the cache neutralizes the mistake rather than reporting
+    /// it. `unresolved_freeze_quorums_total` covers a process that has
+    /// to read (a fresh leader, or one whose entry was evicted), and the
+    /// collection counter here covers the rate at which records go.
     async fn collect_stale_freeze_quorums(
         store: &PersonhogStore,
         candidates: Result<Vec<String>>,
@@ -930,7 +936,14 @@ impl Coordinator {
             .filter(|id| !referenced.contains(id.as_str()))
         {
             match store.delete_freeze_quorum(id).await {
-                Ok(()) => tracing::debug!(quorum_id = %id, "collected unreferenced freeze quorum"),
+                Ok(()) => {
+                    // The cheap half of the sweep's observability: a
+                    // rate here that outpaces plan creation is the shape
+                    // a sweep collecting records it should have spared
+                    // would take.
+                    counter!("personhog_coordination_freeze_quorums_collected_total").increment(1);
+                    tracing::debug!(quorum_id = %id, "collected unreferenced freeze quorum");
+                }
                 Err(e) => {
                     tracing::debug!(quorum_id = %id, error = %e, "freeze quorum sweep failed")
                 }

@@ -4809,13 +4809,15 @@ async fn a_leader_that_goes_between_the_read_and_the_watch_is_still_delivered() 
 
 /// The sweep must spare a membership record a live handoff refers to.
 ///
-/// Its safety rests on reading the record ids before the handoffs, so
-/// anything written in between is not a candidate. Nothing else enforces
-/// that ordering — reverse the two reads, or drop the filter, and the
-/// sweep deletes memberships out from under handoffs still in Freezing.
-/// Each then falls back to requiring every live router, so a rebalance
-/// slows to the pace of whichever router is slowest to ack, with only
-/// `unresolved_freeze_quorums_total` to say why.
+/// Its safety rests on the filter, and on reading the record ids before
+/// the handoffs so anything written in between is not a candidate. Drop
+/// the filter and the sweep deletes memberships out from under handoffs
+/// still in Freezing; each then falls back to requiring every live
+/// router, so a rebalance slows to whichever router is slowest to ack.
+///
+/// This pins the filter. The read ordering it does not pin — the window
+/// is a single round trip and the ordering lives at the call site, not
+/// in the swept function — so reversing those two reads passes here.
 #[tokio::test]
 async fn the_sweep_spares_a_membership_a_live_handoff_refers_to() {
     let store = test_store("freeze-quorum-sweep-spares").await;
