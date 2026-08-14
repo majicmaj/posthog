@@ -1834,8 +1834,6 @@ describe("SessionService", () => {
         "completed",
       );
 
-      // Tail window commit: only the newest page renders, offset by its
-      // absolute start.
       await vi.waitFor(() => {
         expect(mockSessionStoreSetters.updateSession).toHaveBeenCalledWith(
           "run-123",
@@ -1850,8 +1848,6 @@ describe("SessionService", () => {
         undefined,
         { taskRunId: "run-123", startEntryIndex: 7000 },
       );
-      // Hydration fetches the probe and the tail page and nothing else - no
-      // eager backfill of the older history.
       const hydrationOffsets = new Set(
         mockAuthenticatedClient.getTaskRunSessionLogsPage.mock.calls.map(
           (call) => (call[2] as { offset?: number }).offset ?? 0,
@@ -1859,7 +1855,6 @@ describe("SessionService", () => {
       );
       expect(hydrationOffsets).toEqual(new Set([0, 7000]));
 
-      // Scrolling up loads exactly one older page and prepends it.
       const hydrated = createMockSession({
         taskId: "task-123",
         taskRunId: "run-123",
