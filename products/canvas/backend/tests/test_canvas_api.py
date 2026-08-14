@@ -884,11 +884,11 @@ class TestCanvasActivityLog(CanvasAPIBaseTest):
         assert first.status_code == status.HTTP_200_OK, first.json()
 
         default_capabilities = {
-            "posthog": {"insights": [], "inlineQueries": False, "captureEvents": []},
+            "posthog": {"insights": [], "inlineQueries": False, "captureEvents": [], "agentRequests": False},
             "network": {"origins": []},
         }
         widened_capabilities = {
-            "posthog": {"insights": ["abc123"], "inlineQueries": True, "captureEvents": []},
+            "posthog": {"insights": ["abc123"], "inlineQueries": True, "captureEvents": [], "agentRequests": False},
             "network": {"origins": []},
         }
         widened = self._project("export default function C() { return 2 }")
