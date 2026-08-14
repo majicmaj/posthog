@@ -2648,6 +2648,7 @@ class TaskWorkflowDispatch(TeamScopedRootMixin):
     lease_expires_at = models.DateTimeField(null=True, blank=True)
     accepted_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
+    enqueued_at = models.DateTimeField(default=django_timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
