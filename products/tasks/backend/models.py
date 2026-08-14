@@ -902,6 +902,7 @@ class Task(DeletedMetaFields, models.Model):
         return task
 
     @staticmethod
+    @transaction.atomic
     def create_and_run(
         *,
         team: Team,
@@ -943,7 +944,11 @@ class Task(DeletedMetaFields, models.Model):
         mcp_credential_owner_id: int | None = None,
         mcp_gateway_server_ids: list[str] | None = None,
     ) -> "Task":
-        from products.tasks.backend.temporal.client import _normalize_slack_context, execute_task_processing_workflow
+        from products.tasks.backend.logic.services.workflow_dispatch import (
+            WorkflowDispatchOptions,
+            enqueue_or_start_workflow,
+        )
+        from products.tasks.backend.temporal.client import _normalize_slack_context
 
         task, extra_state = Task._build_task(
             team=team,
@@ -1006,26 +1011,17 @@ class Task(DeletedMetaFields, models.Model):
             # are unaffected. If the callback is lost (process recycled in the commit->callback
             # window, or an earlier on_commit hook raising), the run stays QUEUED — the periodic
             # reconciler re-dispatches it from the persisted pending_dispatch above.
-            run_id = str(task_run.id)
-            team_id = task.team.id
-            task_id = str(task.id)
-
             observe_task_run_dispatch_callback(task_run, phase="scheduled")
-
-            def _dispatch() -> None:
-                observe_task_run_dispatch_callback(task_run, phase="fired")
-                execute_task_processing_workflow(
-                    task_id=task_id,
-                    run_id=run_id,
-                    team_id=team_id,
+            enqueue_or_start_workflow(
+                task_run,
+                options=WorkflowDispatchOptions(
                     user_id=user_id,
                     create_pr=create_pr,
-                    slack_thread_context=slack_thread_context,
+                    slack_thread_context=_normalize_slack_context(slack_thread_context),
                     posthog_mcp_scopes=posthog_mcp_scopes,
                     workflow_id_prefix=workflow_id_prefix,
-                )
-
-            transaction.on_commit(_dispatch)
+                ),
+            )
 
         return task
 
@@ -2626,6 +2622,50 @@ class TaskRun(models.Model):
 
     def delete(self, *args, **kwargs):
         raise Exception("Cannot delete TaskRun. Task runs are immutable records.")
+
+
+class TaskWorkflowDispatch(TeamScopedRootMixin):
+    class Kind(models.TextChoices):
+        CREATE = "create", "create"
+        RESTART = "restart", "restart"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "pending"
+        CLAIMED = "claimed", "claimed"
+        ACCEPTED = "accepted", "accepted"
+        DEAD = "dead", "dead"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    team = models.ForeignKey("posthog.Team", on_delete=models.CASCADE, db_constraint=False)
+    task_run = models.ForeignKey(TaskRun, on_delete=models.CASCADE, related_name="workflow_dispatches")
+    workflow_id = models.CharField(max_length=512)
+    dispatch_kind = models.CharField(max_length=16, choices=Kind.choices)
+    payload = models.JSONField(default=dict)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    attempt_count = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=django_timezone.now)
+    claimed_by = models.CharField(max_length=128, blank=True, default="")
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "posthog_taskworkflowdispatch"
+        constraints = [
+            models.UniqueConstraint(fields=["task_run", "dispatch_kind"], name="uniq_dispatch_per_run_kind"),
+            models.CheckConstraint(
+                name="accepted_at_iff_accepted",
+                condition=models.Q(status="accepted", accepted_at__isnull=False)
+                | (~models.Q(status="accepted") & models.Q(accepted_at__isnull=True)),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["next_attempt_at"], condition=models.Q(status="pending"), name="twd_pending_due"),
+            models.Index(fields=["lease_expires_at"], condition=models.Q(status="claimed"), name="twd_claimed_lease"),
+            models.Index(fields=["team", "created_at"], name="twd_team_created"),
+        ]
 
 
 class TaskArtifact(TeamScopedRootMixin, UUIDModel):
