@@ -127,6 +127,15 @@ const CLOUD_SUBSCRIPTION_RECOVERY_BACKOFF = {
  * session shows the retryable error banner instead of stalling silently.
  */
 const CLOUD_SUBSCRIPTION_RECOVERY_NOTIFY_ATTEMPTS = 3;
+const CLOUD_STREAM_WATCHDOG_INTERVAL_MS = 30_000;
+/**
+ * A healthy watcher is never quiet this long: the engine forwards SSE
+ * keepalives as heartbeat updates every ~25-30s even while the run is idle,
+ * and its idle timeout plus reconnect backoff keep a recovering stream's
+ * silence under ~2.5 minutes worst-case. Silence past this threshold means
+ * updates are no longer reaching this process at all.
+ */
+const CLOUD_STREAM_SILENCE_THRESHOLD_MS = 180_000;
 const LOCAL_SESSION_RECOVERY_MESSAGE =
   "Lost connection to the agent. Reconnecting…";
 const LOCAL_SESSION_RECOVERY_FAILED_MESSAGE =
@@ -216,6 +225,7 @@ interface CloudTaskWatcher {
   subscriptionRecoveryAttempts: number;
   subscriptionRecoveryTimeoutId: ReturnType<typeof setTimeout> | null;
   subscriptionErrorSurfaced: boolean;
+  lastUpdateAt: number;
   onStatusChange?: () => void;
 }
 
@@ -6104,9 +6114,11 @@ export class SessionService {
       subscriptionRecoveryAttempts: 0,
       subscriptionRecoveryTimeoutId: null,
       subscriptionErrorSurfaced: false,
+      lastUpdateAt: Date.now(),
       onStatusChange,
     };
     this.cloudTaskWatchers.set(taskId, watcher);
+    this.ensureCloudStreamWatchdog();
 
     // Subscribe before starting the main-process watcher so the first replayed
     // SSE/log burst cannot race ahead of the renderer subscription.
@@ -6591,6 +6603,51 @@ export class SessionService {
     return watcher?.runId === runId && watcher.startToken === startToken;
   }
 
+  private cloudStreamWatchdogId: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Last-resort liveness check for cloud streams. The engine forwards SSE
+   * keepalives as heartbeat updates, so a healthy watcher never goes quiet
+   * for long, even while its run is idle. Silence past the threshold means
+   * updates stopped reaching this process without any error — the failure
+   * class the error-triggered recovery can't see — so rebuild the
+   * subscription and re-watch, which replays a snapshot and revives the
+   * stream.
+   */
+  private ensureCloudStreamWatchdog(): void {
+    if (this.cloudStreamWatchdogId) return;
+    this.cloudStreamWatchdogId = setInterval(() => {
+      this.checkCloudStreamLiveness();
+    }, CLOUD_STREAM_WATCHDOG_INTERVAL_MS);
+  }
+
+  private stopCloudStreamWatchdog(): void {
+    if (!this.cloudStreamWatchdogId) return;
+    clearInterval(this.cloudStreamWatchdogId);
+    this.cloudStreamWatchdogId = null;
+  }
+
+  private checkCloudStreamLiveness(): void {
+    const now = Date.now();
+    for (const [taskId, watcher] of this.cloudTaskWatchers) {
+      const session = this.d.store.getSessions()[watcher.runId];
+      if (!session) continue;
+      // Errored streams already show the retry banner and are retried on
+      // focus/online; terminal runs have nothing left to stream.
+      if (session.status === "error") continue;
+      if (isTerminalStatus(session.cloudStatus)) continue;
+      const silentForMs = now - watcher.lastUpdateAt;
+      if (silentForMs < CLOUD_STREAM_SILENCE_THRESHOLD_MS) continue;
+
+      this.d.log.warn("Cloud stream silent past threshold, resyncing", {
+        taskId,
+        silentForMs,
+      });
+      watcher.lastUpdateAt = now;
+      this.scheduleCloudSubscriptionRecovery(taskId, watcher.runId);
+    }
+  }
+
   private attachCloudTaskSubscription(
     taskId: string,
     runId: string,
@@ -6604,6 +6661,11 @@ export class SessionService {
             return;
           }
           activeWatcher.subscriptionRecoveryAttempts = 0;
+          activeWatcher.lastUpdateAt = Date.now();
+          // Heartbeats only prove liveness; there is nothing to process.
+          if (update.kind === "heartbeat") {
+            return;
+          }
           if (activeWatcher.bufferResumeUpdates) {
             activeWatcher.bufferedResumeUpdates.push(update);
             return;
@@ -6742,6 +6804,9 @@ export class SessionService {
     watcher.subscription.unsubscribe();
     this.cloudTaskWatchers.delete(taskId);
     this.cloudLogGapReconciler.forgetDeficiency(watcher.runId);
+    if (this.cloudTaskWatchers.size === 0) {
+      this.stopCloudStreamWatchdog();
+    }
   }
 
   async preflightToLocal(taskId: string, repoPath: string) {
