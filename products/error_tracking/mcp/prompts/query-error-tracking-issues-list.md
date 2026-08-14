@@ -4,7 +4,7 @@ Use this first when the user asks which errors are happening, which errors are m
 
 Defaults are intentionally useful: active issues, last 7 days, sorted by occurrences, test accounts filtered out, and compact aggregate counts.
 
-Use `execute-sql` against `system.error_tracking_issues` for all-time issue metadata counts by status or severity. This tool returns issues observed within `dateRange`.
+For all-time issue counts by status or severity, query `system.error_tracking_issues` with `posthog:execute-sql`. The table follows the connected user's Error tracking access and only returns issues from the current project. This list tool only includes issues observed during `dateRange`.
 
 Be minimalist. Only add filters needed to answer the user’s question. Do not add "is set" filters unless the user explicitly asks for them.
 

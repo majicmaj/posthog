@@ -8,7 +8,7 @@ Error tracking issues represent grouped exceptions captured by PostHog SDKs. Eac
 
 Column | Type | Nullable | Description
 `id` | uuid | NOT NULL | Primary key (UUID)
-`team_id` | integer | NOT NULL | FK to `system.teams.id`
+`team_id` | integer | NOT NULL | PostHog project ID
 `created_at` | timestamp with tz | NOT NULL | Creation timestamp
 `status` | varchar | NOT NULL | Issue status (see Status Values below)
 `severity` | varchar | NULL | Assigned severity: `low`, `medium`, `high`, or `critical`
@@ -35,6 +35,9 @@ Status | Description
 - Issues group exception events by fingerprint (a hash of exception characteristics)
 - The `name` field is typically auto-populated from the first exception's type/message
 - Use the `events` table with `event = '$exception'` and `issue_id` to query actual exception occurrences
+- Use `system.error_tracking_issues` for all-time issue counts by status or severity
+- Access to `system.error_tracking_issues` follows the connected user's Error tracking permissions and only returns rows from the current project
+- Use `posthog:query-error-tracking-issues-list` for issues observed during a date range or for impact counts
 - Issues can be merged (combining fingerprints) or split (separating fingerprints into new issues)
 
 ---
@@ -112,7 +115,7 @@ GROUP BY status
 ORDER BY count DESC
 ```
 
-**Count issues by assigned severity:**
+**Count issues by severity:**
 
 ```sql
 SELECT severity, count() AS count
