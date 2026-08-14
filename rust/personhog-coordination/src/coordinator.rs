@@ -326,13 +326,7 @@ impl Coordinator {
                     }
                 }
                 Err(e) => {
-                    // A run is unbroken only while its endings keep
-                    // arriving. One quiet window and the next starts a
-                    // new run, which is what keeps a daily blip from
-                    // adding up across days into a restart.
-                    let new_run = last_failure
-                        .is_none_or(|at| at.elapsed() >= self.config.failure_decay_window);
-                    last_failure = Some(Instant::now());
+                    let new_run = self.starts_new_run(&mut last_failure);
                     if !util::note_run_failure_after(
                         &mut consecutive_failures,
                         new_run,
@@ -385,18 +379,31 @@ impl Coordinator {
             })
     }
 
+    /// Whether this term ending begins a new run, stamping it as the
+    /// most recent either way.
+    ///
+    /// A run is unbroken only while its endings keep arriving. One quiet
+    /// window and the next ending starts over, which is what keeps a
+    /// daily blip from adding up across days into a restart.
+    fn starts_new_run(&self, last: &mut Option<Instant>) -> bool {
+        let new_run = last.is_none_or(|at| at.elapsed() >= self.config.failure_decay_window);
+        *last = Some(Instant::now());
+        new_run
+    }
+
     /// Record a term ending that is not itself a failure, and report
     /// whether the run may continue.
     ///
     /// Deliberately quieter than `note_run_failure_after`: it neither
     /// logs a warning nor touches the failure counter, because the
     /// endings that come through here are the protocol working when they
-    /// happen once. Only their accumulation means anything, and the
-    /// decay is what draws that line.
+    /// happen once. Only their accumulation means anything.
     fn note_run_ended(&self, consecutive: &mut u32, last: &mut Option<Instant>) -> bool {
-        let new_run = last.is_none_or(|at| at.elapsed() >= self.config.failure_decay_window);
-        *last = Some(Instant::now());
-        *consecutive = if new_run { 1 } else { *consecutive + 1 };
+        *consecutive = if self.starts_new_run(last) {
+            1
+        } else {
+            *consecutive + 1
+        };
         *consecutive < self.config.failure_budget
     }
 
