@@ -143,6 +143,15 @@ class TestCanvasSourceAdapter(SimpleTestCase):
             ("path", "https://api.example.com/v1"),
             ("credentials", "https://user:secret@api.example.com"),
             ("wildcard", "https://*.example.com"),
+            # Origins land in the viewer's connect-src, so private and local
+            # destinations would let a canvas probe the viewer's machine or LAN.
+            ("loopback_ipv4", "https://127.0.0.1:8443"),
+            ("private_ipv4", "https://192.168.1.1"),
+            ("cgnat_ipv4", "https://100.64.0.1"),
+            ("loopback_ipv6", "https://[::1]"),
+            ("localhost", "https://localhost:8010"),
+            ("single_label", "https://intranet"),
+            ("mdns_suffix", "https://printer.local"),
         ]
     )
     def test_rejects_network_origins_that_are_not_exact_https_origins(self, _name, origin):
