@@ -32,10 +32,9 @@ pub struct CoordinatorConfig {
     pub leader_lease_ttl: i64,
     pub keepalive_interval: Duration,
     /// How long to wait after abdicating before campaigning again.
-    /// Failures are paced by `run_retry_backoff` and bounded by
-    /// `failure_budget`; an abdication is neither, so this is the only
-    /// thing standing between a lease that cannot renew and a
-    /// win-and-abdicate loop that runs as fast as etcd will answer.
+    /// Abdication shares the run count with every other term ending, so
+    /// a flap escalates; this is what keeps it from spinning at etcd
+    /// speed in the meantime.
     pub election_retry_interval: Duration,
 
     /// How long a standby candidate waits on its leader-key watch before
@@ -139,8 +138,7 @@ impl Default for CoordinatorConfig {
             // wait on any of this — the lease is revoked on the way out.
             leader_lease_ttl: 5,
             keepalive_interval: Duration::from_secs(1),
-            // Paces abdication, the one term ending that spends no
-            // budget and so has no backoff to pace it.
+            // Paces abdication, which has no backoff of its own.
             election_retry_interval: Duration::from_secs(1),
             // How long a standby trusts its watch before re-reading the
             // leader key. This bounds the leaderless window if a watch
@@ -191,6 +189,59 @@ pub struct Coordinator {
 /// evaluations record the ack-to-advance span: a departure or tick can
 /// legitimately advance a handoff on acks that arrived long before, and
 /// that elapsed time measures the blocker, not coordinator reaction.
+/// How long the election lease revoke may take before shutdown stops
+/// waiting for it. Matches the pod's equivalent.
+const REVOKE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A cancellation this coordinator intends, and what to attribute it to
+/// once it has landed.
+///
+/// Counted after the transaction rather than when the plan is built: a
+/// concurrent coordinator can win the same partition, and counting at
+/// intent attributes cancellations this coordinator never made — to
+/// named routers, in the case of the missing-acker counter.
+struct Cancellation {
+    reason: &'static str,
+    missing_ackers: Vec<String>,
+}
+
+impl Cancellation {
+    fn record(&self) {
+        counter!(
+            "personhog_coordination_handoffs_cancelled_total",
+            "reason" => self.reason,
+        )
+        .increment(1);
+        for router in &self.missing_ackers {
+            counter!(
+                "personhog_coordination_freeze_ack_missing_total",
+                "router" => router.clone(),
+            )
+            .increment(1);
+        }
+    }
+}
+
+/// A cancellation with no successor and no live owner to reaffirm
+/// toward, applied as its own guarded transaction after the plan.
+struct FallbackDelete {
+    predecessor: HandoffState,
+    mod_revision: i64,
+    cancellation: Cancellation,
+}
+
+/// Why a standby stopped waiting on the leader-key watch.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Woke {
+    /// The leader key was deleted: the election is open.
+    Opened,
+    /// The fallback interval elapsed; re-read in case the watch is
+    /// stalled without having errored.
+    Fallback,
+    /// The stream ended or errored, so it can no longer be trusted.
+    StreamLost,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AdvanceTrigger {
     Ack,
@@ -251,23 +302,34 @@ impl Coordinator {
                 Ok(false) => {}
                 Err(e) if e.is_leadership_lost() => {
                     tracing::info!(name = %self.config.name, "abdicated; a successor takes over");
-                    // An abdication spends no budget, so nothing else
-                    // paces it — and `try_lead` revokes on the way out,
-                    // so the key this candidate would wait for is gone
-                    // and it re-campaigns at once. A lease that cannot
-                    // renew reaches this arm every time, which without
-                    // a pace here is a full-speed win-and-abdicate loop
-                    // against the etcd least able to absorb one.
+                    // Counted as well as logged: abdicating repeatedly
+                    // is the shape this arm escalates on, and without a
+                    // series the lead-up to that is invisible — the
+                    // crash would be the first thing anyone saw.
+                    counter!("personhog_coordination_abdications_total").increment(1);
+                    // One abdication is the protocol working. A term that
+                    // keeps ending this way is not: a lease that cannot
+                    // renew reaches this arm every time, and each cycle
+                    // pays a full coordination bootstrap — a revision
+                    // read, six watch creations, four list reads — to
+                    // lead for the length of a renewal margin and stop.
+                    // Coordination is wedged for every one of those
+                    // terms, so the flap joins the same run as any other
+                    // ending and escalates like one, while a single
+                    // abdication decays before the next.
+                    if !self.note_run_ended(&mut consecutive_failures, &mut last_failure) {
+                        return Err(e);
+                    }
                     tokio::select! {
                         _ = cancel.cancelled() => return Ok(()),
                         _ = tokio::time::sleep(self.config.election_retry_interval) => {}
                     }
                 }
                 Err(e) => {
-                    // A run is unbroken only while its failures keep
-                    // arriving. One quiet window and the next failure
-                    // starts a new run, which is what keeps a daily blip
-                    // from adding up across days into a restart.
+                    // A run is unbroken only while its endings keep
+                    // arriving. One quiet window and the next starts a
+                    // new run, which is what keeps a daily blip from
+                    // adding up across days into a restart.
                     let new_run = last_failure
                         .is_none_or(|at| at.elapsed() >= self.config.failure_decay_window);
                     last_failure = Some(Instant::now());
@@ -302,6 +364,42 @@ impl Coordinator {
         }
     }
 
+    /// Give up the election lease, bounded.
+    ///
+    /// Cleanup on a path whose usual reason for existing is an unwell
+    /// etcd, and the store sets no request timeout of its own — so
+    /// unbounded this waits out the whole outage, holding the shutdown
+    /// past the termination grace period the charts allow. The lease
+    /// expires on its TTL regardless; all a successful revoke buys is
+    /// the next candidate not waiting for it.
+    async fn revoke_election_lease(&self, lease_id: i64) -> Result<()> {
+        tokio::time::timeout(REVOKE_TIMEOUT, self.store.revoke_lease(lease_id))
+            .await
+            .unwrap_or_else(|_| {
+                tracing::warn!(
+                    name = %self.config.name,
+                    lease_id,
+                    "election lease revoke timed out; it expires on its TTL"
+                );
+                Ok(())
+            })
+    }
+
+    /// Record a term ending that is not itself a failure, and report
+    /// whether the run may continue.
+    ///
+    /// Deliberately quieter than `note_run_failure_after`: it neither
+    /// logs a warning nor touches the failure counter, because the
+    /// endings that come through here are the protocol working when they
+    /// happen once. Only their accumulation means anything, and the
+    /// decay is what draws that line.
+    fn note_run_ended(&self, consecutive: &mut u32, last: &mut Option<Instant>) -> bool {
+        let new_run = last.is_none_or(|at| at.elapsed() >= self.config.failure_decay_window);
+        *last = Some(Instant::now());
+        *consecutive = if new_run { 1 } else { *consecutive + 1 };
+        *consecutive < self.config.failure_budget
+    }
+
     /// Block until this candidate has something to campaign for: no
     /// leader is recorded, or the one that is recorded goes away.
     /// Returns immediately on cancellation, leaving the caller to notice
@@ -328,27 +426,42 @@ impl Coordinator {
             );
 
             let mut stream = self.store.watch_leader_from(revision + 1).await?;
-            let opened = loop {
+            let woke = loop {
                 let message = tokio::select! {
                     _ = cancel.cancelled() => return Ok(()),
-                    _ = tokio::time::sleep(self.config.standby_poll_interval) => break false,
+                    _ = tokio::time::sleep(self.config.standby_poll_interval) => break Woke::Fallback,
                     message = stream.message() => message,
                 };
                 // A stream that ends or errors leaves this candidate
                 // blind, so re-read rather than trusting it further.
                 let Ok(Some(response)) = message else {
-                    break false;
+                    break Woke::StreamLost;
                 };
                 if response
                     .events()
                     .iter()
                     .any(|event| event.event_type() == EventType::Delete)
                 {
-                    break true;
+                    break Woke::Opened;
                 }
             };
-            if opened {
-                return Ok(());
+            match woke {
+                Woke::Opened => return Ok(()),
+                // The fallback is meant to re-read at once; that is what
+                // it is for.
+                Woke::Fallback => {}
+                // A stream that fails immediately would otherwise spin
+                // this loop at one read and one watch creation per round
+                // trip, per candidate — against an etcd already unwell
+                // enough to be dropping watches. Waiting the fallback
+                // interval degrades cleanly to what a candidate does
+                // when it has no working watch at all: poll.
+                Woke::StreamLost => {
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Ok(()),
+                        _ = tokio::time::sleep(self.config.standby_poll_interval) => {}
+                    }
+                }
             }
         }
     }
@@ -373,7 +486,7 @@ impl Coordinator {
         {
             Ok(acquired) => acquired,
             Err(e) => {
-                drop(self.store.revoke_lease(lease_id).await);
+                drop(self.revoke_election_lease(lease_id).await);
                 return Err(e);
             }
         };
@@ -382,7 +495,7 @@ impl Coordinator {
             tracing::debug!(name = %self.config.name, "another coordinator is leader, standing by");
             // Nothing hangs off the lease; revoke it rather than leaking
             // one lease per election retry from every standby candidate.
-            drop(self.store.revoke_lease(lease_id).await);
+            drop(self.revoke_election_lease(lease_id).await);
             return Ok(false);
         }
 
@@ -447,7 +560,7 @@ impl Coordinator {
 
         // Revoke so the next candidate's campaign wins immediately instead
         // of waiting out the lease TTL.
-        drop(self.store.revoke_lease(lease_id).await);
+        drop(self.revoke_election_lease(lease_id).await);
 
         reset_coordinator_gauges();
 
@@ -1186,14 +1299,24 @@ impl Coordinator {
             .collect();
         let mut creations: Vec<HandoffState> = Vec::new();
         let mut replacements: Vec<HandoffReplacement> = Vec::new();
-        let mut fallback_deletes: Vec<(HandoffState, i64)> = Vec::new();
+        let mut fallback_deletes: Vec<FallbackDelete> = Vec::new();
         let mut replaced_dispositions: Vec<&'static str> = Vec::new();
+        // Held until the plan transaction lands; see `Cancellation`.
+        let mut planned_cancellations: Vec<Cancellation> = Vec::new();
 
         for handoff in handoff_objects {
             match cancelled_by_partition.remove(&handoff.partition) {
                 Some((predecessor, mod_revision)) => {
-                    Self::log_cancellation(store, &routers, &predecessor, &registered, "successor")
-                        .await;
+                    planned_cancellations.push(
+                        Self::describe_cancellation(
+                            store,
+                            &routers,
+                            &predecessor,
+                            &registered,
+                            "successor",
+                        )
+                        .await,
+                    );
                     replacements.push(HandoffReplacement {
                         handoff,
                         expected_mod_revision: mod_revision,
@@ -1209,8 +1332,16 @@ impl Coordinator {
                 .filter(|owner| registered.contains(owner.as_str()));
             match owner {
                 Some(owner) => {
-                    Self::log_cancellation(store, &routers, &predecessor, &registered, "reaffirm")
-                        .await;
+                    planned_cancellations.push(
+                        Self::describe_cancellation(
+                            store,
+                            &routers,
+                            &predecessor,
+                            &registered,
+                            "reaffirm",
+                        )
+                        .await,
+                    );
                     replacements.push(HandoffReplacement {
                         handoff: HandoffState {
                             partition: predecessor.partition,
@@ -1237,9 +1368,19 @@ impl Coordinator {
                     replaced_dispositions.push("reaffirm");
                 }
                 None => {
-                    Self::log_cancellation(store, &routers, &predecessor, &registered, "delete")
-                        .await;
-                    fallback_deletes.push((predecessor, mod_revision));
+                    let cancellation = Self::describe_cancellation(
+                        store,
+                        &routers,
+                        &predecessor,
+                        &registered,
+                        "delete",
+                    )
+                    .await;
+                    fallback_deletes.push(FallbackDelete {
+                        predecessor,
+                        mod_revision,
+                        cancellation,
+                    });
                 }
             }
         }
@@ -1281,6 +1422,10 @@ impl Coordinator {
             })
             .collect();
 
+        let references_quorum = creations
+            .iter()
+            .chain(replacements.iter().map(|r| &r.handoff))
+            .any(|handoff| handoff.freeze_quorum_ref.is_some());
         if (!creations.is_empty() || !replacements.is_empty())
             && !store
                 .apply_plan(
@@ -1288,7 +1433,13 @@ impl Coordinator {
                     &creations,
                     &replacements,
                     &preconditions,
-                    Some((&freeze_quorum_id, &freeze_quorum)),
+                    // A plan whose cancellations all resolve to reaffirms
+                    // creates no handoff that refers to a membership, and
+                    // that is the common shape when a wedged freeze had
+                    // sound placement. Writing one anyway leaves a record
+                    // for the next sweep to delete, during the mass
+                    // cancellation when etcd is least well.
+                    references_quorum.then_some((&freeze_quorum_id, &freeze_quorum)),
                 )
                 .await?
         {
@@ -1313,6 +1464,9 @@ impl Coordinator {
                 "handoff created"
             );
         }
+        for cancellation in &planned_cancellations {
+            cancellation.record();
+        }
         for disposition in &replaced_dispositions {
             counter!(
                 "personhog_coordination_handoffs_replaced_total",
@@ -1326,11 +1480,15 @@ impl Coordinator {
         // its own, which is what the safety argument needs, and a stale
         // guard only ever skips a cancel for a record that changed under
         // us.
-        for (predecessor, mod_revision) in fallback_deletes {
+        for delete in fallback_deletes {
             if store
-                .delete_handoff_and_acks_if_unchanged(predecessor.partition, mod_revision)
+                .delete_handoff_and_acks_if_unchanged(
+                    delete.predecessor.partition,
+                    delete.mod_revision,
+                )
                 .await?
             {
+                delete.cancellation.record();
                 counter!(
                     "personhog_coordination_handoffs_replaced_total",
                     "disposition" => "delete",
@@ -1365,13 +1523,15 @@ impl Coordinator {
     /// one specific non-acking router, and naming it turns the diagnosis
     /// into reading a label. Attribution is best-effort; a failed ack
     /// read must not block the replacement.
-    async fn log_cancellation(
+    /// Describe a cancellation and log the intent, returning what to
+    /// count once it has actually happened.
+    async fn describe_cancellation(
         store: &PersonhogStore,
         routers: &[RegisteredRouter],
         predecessor: &HandoffState,
         registered: &HashSet<&str>,
         disposition: &'static str,
-    ) {
+    ) -> Cancellation {
         let reason = if registered.contains(predecessor.new_owner.as_str()) {
             "phase_deadline"
         } else {
@@ -1402,17 +1562,9 @@ impl Coordinator {
             missing_freeze_ackers = ?missing_ackers,
             "cancelling handoff by replacement"
         );
-        counter!(
-            "personhog_coordination_handoffs_cancelled_total",
-            "reason" => reason,
-        )
-        .increment(1);
-        for router in &missing_ackers {
-            counter!(
-                "personhog_coordination_freeze_ack_missing_total",
-                "router" => router.clone(),
-            )
-            .increment(1);
+        Cancellation {
+            reason,
+            missing_ackers,
         }
     }
 

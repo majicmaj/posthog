@@ -342,6 +342,7 @@ pub fn preregister_coordinator_metrics() {
     }
     metrics::counter!("personhog_coordination_elections_won_total").increment(0);
     metrics::counter!("personhog_coordination_election_campaigns_total").increment(0);
+    metrics::counter!("personhog_coordination_abdications_total").increment(0);
     metrics::counter!("personhog_coordination_unresolved_freeze_quorums_total").increment(0);
     metrics::counter!("personhog_coordination_partition_releases_total").increment(0);
     metrics::gauge!("personhog_coordination_generation_hold_pods").set(0.0);
