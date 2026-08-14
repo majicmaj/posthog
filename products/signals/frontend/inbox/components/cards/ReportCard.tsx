@@ -23,7 +23,7 @@ import {
 import { SignalReportActionabilityBadge } from '../badges/SignalReportActionabilityBadge'
 import { SignalReportBillingBadge } from '../badges/SignalReportBillingBadge'
 import { SignalReportPriorityBadge } from '../badges/SignalReportPriorityBadge'
-import { SignalReportStatusBadge } from '../badges/SignalReportStatusBadge'
+import { isStatusRedundantWithActionability, SignalReportStatusBadge } from '../badges/SignalReportStatusBadge'
 import {
     hasKnownSourceProduct,
     knownSourceProductEntries,
@@ -216,7 +216,7 @@ export function ReportCard({
                             sourceProducts={report.source_products}
                             scoutSkillName={report.scout_name}
                         />
-                        {!hasPr && (!isReady || !report.actionability) && (
+                        {!hasPr && !isStatusRedundantWithActionability(report.status, report.actionability) && (
                             <SignalReportStatusBadge status={report.status} />
                         )}
                         {!hasPr && report.actionability && (
