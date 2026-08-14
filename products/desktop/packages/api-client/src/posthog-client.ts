@@ -3718,11 +3718,18 @@ export class PostHogAPIClient {
       );
     }
     const entries = (await response.json()) as StoredLogEntry[];
-    const matchingHeader = Number(response.headers.get("X-Matching-Count"));
+    // An absent header must stay null: Number(null) is 0, and callers treat
+    // the count as authoritative when it is present.
+    const matchingHeader = response.headers.get("X-Matching-Count");
+    const matchingCount =
+      matchingHeader === null ? null : Number(matchingHeader);
     return {
       entries,
       hasMore: response.headers.get("X-Has-More") === "true",
-      matchingCount: Number.isFinite(matchingHeader) ? matchingHeader : null,
+      matchingCount:
+        matchingCount !== null && Number.isFinite(matchingCount)
+          ? matchingCount
+          : null,
     };
   }
 
