@@ -989,7 +989,10 @@ class CanvasViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
             429: OpenApiResponse(description="The team's compute quota is exhausted; retry later."),
         },
     )
-    @action(methods=["POST"], detail=True)
+    # task:write as well: the dispatched run executes with the creator's
+    # credentials, so canvas:write alone must not be able to start or steer it —
+    # consistent with the task-run endpoints themselves.
+    @action(methods=["POST"], detail=True, required_scopes=["canvas:write", "task:write"])
     def request_agent(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         """Route a viewer-approved change request to the canvas's authoring task."""
         canvas = self.get_object()
