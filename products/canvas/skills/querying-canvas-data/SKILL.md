@@ -12,7 +12,9 @@ description: >
 
 The global `ph` object (injected by the host — never imported, never initialized) is the only way
 a canvas talks to PostHog. Credentials stay in the host; `fetch()`, posthog-js, and hand-rolled
-clients fail in the sandbox.
+clients cannot reach PostHog from the sandbox. The one sanctioned use of `fetch()` is a non-PostHog
+origin declared in `capabilities.network.origins`, and only in the published canvas — the
+edit-mode preview blocks all direct network access.
 
 ## Data hierarchy — back every metric with a saved insight
 
