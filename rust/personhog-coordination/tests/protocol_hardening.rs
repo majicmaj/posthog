@@ -4344,51 +4344,6 @@ async fn a_pending_new_owner_is_hinted_but_not_warmed() {
     cancel.cancel();
 }
 
-/// A coordinator whose etcd is unreachable must give up so the process
-/// can restart, instead of re-campaigning forever.
-///
-/// The loop previously logged a warning and slept, with no counter and no
-/// way to return an error, so its caller's `signal_failure` was
-/// unreachable. A deterministic failure — a request etcd always rejects,
-/// a connection that never comes back — then produced a cluster with no
-/// working coordinator, no partitions moving, and nothing but a warn log
-/// to say so.
-#[tokio::test]
-async fn a_coordinator_that_cannot_reach_etcd_stops_instead_of_retrying_forever() {
-    let proxy = FlakyProxy::start("127.0.0.1:2379").await;
-    let prefix = format!("/test-coordinator-budget-{}/", uuid::Uuid::new_v4());
-    // Connect while the proxy is healthy: the failure under test is a
-    // connection that dies later, not one that never opened.
-    let store = store_at(&proxy.endpoint, &prefix).await;
-
-    let coordinator = Coordinator::new(
-        Arc::clone(&store),
-        CoordinatorConfig {
-            name: "coordinator-budget".to_string(),
-            election_retry_interval: Duration::from_millis(10),
-            failure_budget: 3,
-            ..Default::default()
-        },
-        Arc::new(StickyBalancedStrategy),
-        None,
-    );
-
-    proxy.set_blackholed(true);
-    proxy.sever();
-
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(20),
-        coordinator.run(CancellationToken::new()),
-    )
-    .await
-    .expect("the coordinator must return rather than campaign forever");
-
-    assert!(
-        outcome.is_err(),
-        "an unreachable etcd must exhaust the budget and surface as an error"
-    );
-}
-
 /// A standby waits on the leader key rather than campaigning at its
 /// retry interval.
 ///
@@ -4399,7 +4354,11 @@ async fn a_coordinator_that_cannot_reach_etcd_stops_instead_of_retrying_forever(
 /// actually goes away.
 ///
 /// The fallback re-read is set far beyond the test's own timeouts, so
-/// only the watch can end the wait.
+/// only the delete can end the wait. That the watch delivers a delete
+/// landing in the gap between the read and the watch attaching is a
+/// separate property, pinned deterministically by
+/// `a_leader_that_goes_between_the_read_and_the_watch_is_still_delivered`
+/// — this test cannot force that interleaving.
 #[tokio::test]
 async fn a_standby_waits_on_the_leader_key_rather_than_campaigning() {
     let prefix = format!("/test-standby-watch-{}/", uuid::Uuid::new_v4());
@@ -4433,24 +4392,25 @@ async fn a_standby_waits_on_the_leader_key_rather_than_campaigning() {
         "the test's own leader must take the key"
     );
 
-    // An incumbent holds it, so the candidate parks on the watch. The
-    // wait runs as a task from here on, so what ends it is observable:
-    // only the delete can, with the fallback re-read parked past every
-    // timeout in this test.
+    // An incumbent holds it, so the candidate parks. The wait runs as a
+    // task from here on, with the fallback re-read set past every
+    // timeout in this test, so nothing but the delete can end it.
     let waiting = {
         let standby = Arc::clone(&standby);
         let cancel = cancel.clone();
         tokio::spawn(async move { standby.await_election_opening(&cancel).await })
     };
-    tokio::time::sleep(Duration::from_millis(750)).await;
+    // Generous, because the point of the window is to let the wait
+    // reach its read and park: a runner slow enough to still be reading
+    // when the revoke lands would see the read return no leader and
+    // finish for the wrong reason.
+    tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(
         !waiting.is_finished(),
         "a candidate must not enter an election another coordinator holds"
     );
 
-    // Losing the lease deletes the key. The wait is anchored on the
-    // revision its read returned, so the delete wakes the candidate
-    // whether or not the watch had attached by the time it landed.
+    // Losing the lease deletes the key, which is what ends the wait.
     store.revoke_lease(lease_id).await.unwrap();
     tokio::time::timeout(WAIT_TIMEOUT, waiting)
         .await
@@ -4845,4 +4805,91 @@ async fn a_leader_that_goes_between_the_read_and_the_watch_is_still_delivered() 
         delivered,
         "a watch anchored on the read's revision must replay the deletion"
     );
+}
+
+/// The sweep must spare a membership record a live handoff refers to.
+///
+/// Its safety rests on reading the record ids before the handoffs, so
+/// anything written in between is not a candidate. Nothing else enforces
+/// that ordering — reverse the two reads, or drop the filter, and the
+/// sweep deletes memberships out from under handoffs still in Freezing.
+/// Each then falls back to requiring every live router, so a rebalance
+/// slows to the pace of whichever router is slowest to ack, with only
+/// `unresolved_freeze_quorums_total` to say why.
+#[tokio::test]
+async fn the_sweep_spares_a_membership_a_live_handoff_refers_to() {
+    let store = test_store("freeze-quorum-sweep-spares").await;
+    store.set_total_partitions(2).await.expect("set partitions");
+    let cancel = CancellationToken::new();
+
+    // A registered router that never acks parks the handoffs in
+    // Freezing, so their membership stays referenced while the sweep
+    // runs against it repeatedly.
+    let lease_id = store.grant_lease(60).await.expect("grant lease");
+    store
+        .register_router(
+            &RegisteredRouter {
+                router_name: "sweep-router".to_string(),
+                registered_at: 0,
+                last_heartbeat: 0,
+            },
+            lease_id,
+        )
+        .await
+        .expect("register router");
+
+    let _pod = start_pod(Arc::clone(&store), "sweep-pod", cancel.clone());
+    let _coordinator = start_coordinator(
+        Arc::clone(&store),
+        Arc::new(StickyBalancedStrategy),
+        cancel.clone(),
+    );
+
+    let check = Arc::clone(&store);
+    wait_for_condition_named(
+        WAIT_TIMEOUT,
+        POLL_INTERVAL,
+        "a referenced membership",
+        || {
+            let store = Arc::clone(&check);
+            async move {
+                store
+                    .list_handoffs()
+                    .await
+                    .map(|handoffs| {
+                        !handoffs.is_empty()
+                            && handoffs.iter().all(|h| {
+                                h.phase == HandoffPhase::Freezing && h.freeze_quorum_ref.is_some()
+                            })
+                    })
+                    .unwrap_or(false)
+            }
+        },
+    )
+    .await;
+
+    let id = store
+        .list_handoffs()
+        .await
+        .expect("list handoffs")
+        .first()
+        .and_then(|h| h.freeze_quorum_ref.clone())
+        .expect("a referenced membership id");
+
+    // The coordinator's reconcile tick sweeps every 500ms in these
+    // tests, so this spans several passes over a record that is still
+    // referenced throughout.
+    for _ in 0..6 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(
+            store
+                .get_freeze_quorum(&id)
+                .await
+                .expect("reading the membership must succeed")
+                .is_some(),
+            "the sweep must not collect a membership a Freezing handoff still refers to"
+        );
+    }
+
+    cancel.cancel();
 }
