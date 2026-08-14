@@ -55,7 +55,9 @@ function cachedRead<T>(
     queryKey: [CANVAS_QUERY_KEY, method, stableStringify(input)] as const,
     queryFn: run,
     staleTime: (refreshSeconds ?? 5 * 60) * 1_000,
-    gcTime: 10 * 60_000,
+    // At least the refresh interval, or GC would evict an inactive entry
+    // before it goes stale and force an early backend re-read.
+    gcTime: Math.max(refreshSeconds ?? 5 * 60, 10 * 60) * 1_000,
   });
 }
 

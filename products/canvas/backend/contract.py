@@ -8,6 +8,7 @@ diverging silently.
 """
 
 import json
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,25 @@ def allowed_import_specifiers() -> frozenset[str]:
     return frozenset(platform_contract()["allowedImportSpecifiers"])
 
 
+def _is_public_network_host(hostname: str) -> bool:
+    """Reject hosts that point at the viewer's machine or private network.
+
+    Declared origins go straight into the viewer's connect-src, so a loopback or
+    private origin would let a published canvas probe services on the viewer's
+    machine or LAN. Literal IPs must be globally routable; names must be dotted
+    public DNS names outside the reserved local suffixes. Rebinding a public
+    name to a private address is out of scope for publish-time validation — that
+    needs resolver or network-level controls.
+    """
+    try:
+        return ipaddress.ip_address(hostname).is_global
+    except ValueError:
+        pass
+    if "." not in hostname:
+        return False
+    return not hostname.rstrip(".").endswith((".local", ".localhost", ".internal", ".home.arpa"))
+
+
 def canonical_network_origin(origin: Any) -> str | None:
     if not isinstance(origin, str):
         return None
@@ -49,6 +69,7 @@ def canonical_network_origin(origin: Any) -> str | None:
         or parsed.query
         or parsed.fragment
         or "*" in parsed.hostname
+        or not _is_public_network_host(parsed.hostname.lower())
     ):
         return None
     hostname = f"[{parsed.hostname.lower()}]" if ":" in parsed.hostname else parsed.hostname.lower()
