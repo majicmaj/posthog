@@ -7466,7 +7466,9 @@ def request_canvas_change(
         )
         return "reported"
     outcome = request_canvas_fix(task_id, team_id, prompt=prompt, acting_user_id=acting_user_id)
-    if outcome in {"signaled", "new_run", "already_queued"}:
+    # already_queued is a deduplicated repeat: the request that queued the run
+    # already wrote this entry, so writing another would double the record.
+    if outcome in {"signaled", "new_run"}:
         create_thread_message(task_id, team_id, acting_user_id, content="Run requested from the canvas")
     return outcome
 
