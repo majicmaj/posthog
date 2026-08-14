@@ -188,12 +188,14 @@ impl PersonhogStore {
     /// replaying events since that revision even if they predate the
     /// watch's creation.
     pub async fn watch_pods_from(&self, start_revision: i64) -> Result<WatchStream> {
+        count_call("watch_pods_from");
         let key = self.key(StoreKey::PodsPrefix);
         Ok(self.inner.watch_from(&key, start_revision).await?)
     }
 
     /// The current etcd store revision, for anchoring watches.
     pub async fn current_revision(&self) -> Result<i64> {
+        count_call("current_revision");
         Ok(self.inner.current_revision().await?)
     }
 
@@ -217,6 +219,7 @@ impl PersonhogStore {
     }
 
     pub async fn watch_routers_from(&self, start_revision: i64) -> Result<WatchStream> {
+        count_call("watch_routers_from");
         let key = self.key(StoreKey::RoutersPrefix);
         Ok(self.inner.watch_from(&key, start_revision).await?)
     }
@@ -249,6 +252,7 @@ impl PersonhogStore {
     pub async fn list_assignments_with_mod_revisions(
         &self,
     ) -> Result<Vec<(PartitionAssignment, i64)>> {
+        count_call("list_assignments_with_mod_revisions");
         let key = self.key(StoreKey::AssignmentsPrefix);
         Ok(self.inner.list_with_mod_revisions(&key).await?)
     }
@@ -373,6 +377,7 @@ impl PersonhogStore {
         &self,
         partition: u32,
     ) -> Result<Option<(HandoffState, i64)>> {
+        count_call("get_handoff_with_mod_revision");
         let key = self.key(StoreKey::Handoff(partition));
         Ok(self.inner.get_with_mod_revision(&key).await?)
     }
@@ -389,6 +394,7 @@ impl PersonhogStore {
         partition: u32,
         expected_mod_revision: i64,
     ) -> Result<bool> {
+        count_call("delete_handoff_and_acks_if_unchanged");
         let handoff_key = self.key(StoreKey::Handoff(partition));
         let prefix_delete = || Some(DeleteOptions::new().with_prefix());
         let txn = Txn::new()
@@ -432,6 +438,7 @@ impl PersonhogStore {
     /// events since that revision even if they predate the watch's
     /// creation.
     pub async fn watch_handoffs_from(&self, start_revision: i64) -> Result<WatchStream> {
+        count_call("watch_handoffs_from");
         let key = self.key(StoreKey::HandoffsPrefix);
         Ok(self.inner.watch_from(&key, start_revision).await?)
     }
@@ -468,6 +475,7 @@ impl PersonhogStore {
     }
 
     pub async fn watch_freeze_acks_from(&self, start_revision: i64) -> Result<WatchStream> {
+        count_call("watch_freeze_acks_from");
         let key = self.key(StoreKey::FreezeAcksPrefix);
         Ok(self.inner.watch_from(&key, start_revision).await?)
     }
@@ -504,6 +512,7 @@ impl PersonhogStore {
     }
 
     pub async fn watch_drained_acks_from(&self, start_revision: i64) -> Result<WatchStream> {
+        count_call("watch_drained_acks_from");
         let key = self.key(StoreKey::DrainedAcksPrefix);
         Ok(self.inner.watch_from(&key, start_revision).await?)
     }
@@ -540,6 +549,7 @@ impl PersonhogStore {
     }
 
     pub async fn watch_warmed_acks_from(&self, start_revision: i64) -> Result<WatchStream> {
+        count_call("watch_warmed_acks_from");
         let key = self.key(StoreKey::WarmedAcksPrefix);
         Ok(self.inner.watch_from(&key, start_revision).await?)
     }
@@ -801,13 +811,19 @@ impl PersonhogStore {
                         .freeze_quorums
                         .lock()
                         .expect("freeze quorum cache lock poisoned");
-                    // One live plan at a time in the steady state; a
-                    // handful of entries covers a failover overlapping
-                    // its predecessor, and the sweep deletes the records
-                    // themselves. Clearing wholesale keeps the bound
-                    // without tracking recency for a map this small.
-                    if cache.len() >= 8 {
-                        cache.clear();
+                    // Sized for a rolling deploy, not for the steady
+                    // state: every pod event mints a plan, and one slow
+                    // router parks earlier plans' handoffs in Freezing
+                    // until their deadline, so the live set is plans in
+                    // flight rather than one. Evicting the oldest keeps
+                    // the working set — ids lead with milliseconds, so
+                    // the smallest is the oldest — where clearing
+                    // wholesale would throw away the entry every caller
+                    // is about to ask for.
+                    if cache.len() >= 32 {
+                        if let Some(oldest) = cache.keys().min().cloned() {
+                            cache.remove(&oldest);
+                        }
                     }
                     cache.insert(id.clone(), members.clone());
                 }
@@ -849,6 +865,7 @@ impl PersonhogStore {
     ///
     /// Returns `true` if this instance became the leader.
     pub async fn try_acquire_leadership(&self, holder: &str, lease_id: i64) -> Result<bool> {
+        count_call("try_acquire_leadership");
         let key = self.key(StoreKey::Leader);
         let leader = LeaderInfo {
             holder: holder.to_string(),
@@ -887,6 +904,7 @@ impl PersonhogStore {
 
     /// Watch the leader key alone, from `start_revision` inclusive.
     pub async fn watch_leader_from(&self, start_revision: i64) -> Result<WatchStream> {
+        count_call("watch_leader_from");
         let key = self.key(StoreKey::Leader);
         Ok(self.inner.watch_key_from(&key, start_revision).await?)
     }
@@ -902,6 +920,7 @@ impl PersonhogStore {
         &self,
         lease_id: i64,
     ) -> Result<(etcd_client::LeaseKeeper, etcd_client::LeaseKeepAliveStream)> {
+        count_call("keep_alive");
         Ok(self.inner.keep_alive(lease_id).await?)
     }
 
@@ -913,6 +932,7 @@ impl PersonhogStore {
     // ── Config operations ───────────────────────────────────────
 
     pub async fn get_total_partitions(&self) -> Result<u32> {
+        count_call("get_total_partitions");
         let key = self.key(StoreKey::TotalPartitions);
         let bytes = self
             .inner

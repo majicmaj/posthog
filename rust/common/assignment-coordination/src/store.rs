@@ -328,23 +328,16 @@ impl EtcdStore {
 
     // ── Transactions ─────────────────────────────────────────────
 
-    /// The response's size is what this records — the request's own size
-    /// is not reachable once a `Txn` is built, and `apply_plan` measures
-    /// that side directly for the one transaction that approaches
-    /// `--max-request-bytes`.
+    /// Deliberately not in `record_payload_bytes`: a transaction's size
+    /// lives in the request, which is no longer reachable once the `Txn`
+    /// is built, and its response carries only what its reads returned —
+    /// nothing, for the plan transaction that actually approaches
+    /// `--max-request-bytes`. A histogram here would sit at zero under
+    /// the name an operator reaches for first. `apply_plan` measures the
+    /// request side directly instead.
     pub async fn txn(&self, txn: Txn) -> Result<TxnResponse> {
         let _t = OpTimer::new("txn");
-        let resp = self.client.clone().txn(txn).await?;
-        let bytes: usize = resp
-            .op_responses()
-            .iter()
-            .map(|op| match op {
-                etcd_client::TxnOpResponse::Get(get) => kvs_bytes(get.kvs()),
-                _ => 0,
-            })
-            .sum();
-        record_payload_bytes("txn", bytes);
-        Ok(resp)
+        Ok(self.client.clone().txn(txn).await?)
     }
 
     /// Atomically create `key` bound to `lease_id`, only if it does not

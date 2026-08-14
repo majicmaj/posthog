@@ -4788,11 +4788,12 @@ async fn a_handoff_cancelled_mid_warm_reaches_the_pod_still_warming() {
 /// lets the watch attach first — and leaves a candidate parked until its
 /// fallback re-read, on top of the lease TTL it already waited out.
 ///
-/// Driven through the two primitives `read_leader_and_watch` composes,
-/// rather than through that call or the standby loop: the deletion has
-/// to land between the read and the watch, and no amount of racing a
-/// composed call produces that ordering on demand. The composition
-/// itself is two lines with no branches.
+/// Driven through the two store calls the standby loop makes, in that
+/// order, rather than through the loop: the deletion has to land between
+/// them, and no amount of racing the loop produces that ordering on
+/// demand. What this pins is the store contract the loop depends on —
+/// that a watch anchored on a read's revision replays what the read
+/// missed. The loop's own use of it is two adjacent lines.
 #[tokio::test]
 async fn a_leader_that_goes_between_the_read_and_the_watch_is_still_delivered() {
     let store = test_store("standby-watch-anchor").await;
@@ -4806,10 +4807,7 @@ async fn a_leader_that_goes_between_the_read_and_the_watch_is_still_delivered() 
         "the test's own leader must take the key"
     );
 
-    // The read a standby makes, then the deletion, then the watch —
-    // the interleaving `read_leader_and_watch` composes these two
-    // primitives to survive, driven step by step because it is the one
-    // ordering a test cannot produce by racing the composed call.
+    // The read a standby makes, then the deletion, then the watch.
     let (leader, revision) = store
         .get_leader_with_revision()
         .await
